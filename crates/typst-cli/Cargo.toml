@@ -21,7 +21,7 @@ doc = false
 # downstream artifacts and containers use `typst-agent`.
 [[bin]]
 name = "typst"
-path = "src/main.rs"
+path = "src/compat.rs"
 doc = false
 
 [dependencies]

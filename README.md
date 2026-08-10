@@ -148,7 +148,7 @@ Typst Agent binaries and images are published independently from upstream:
 - Run the public container image with
   `docker run --rm ghcr.io/anartha-corp/typst-agent:latest --help`.
 - With a [Rust][rust] toolchain, install the CLI directly from this repository:
-  `cargo install --git https://github.com/anartha-corp/typst-agent --locked --features self-update typst-cli`.
+  `cargo install --git https://github.com/anartha-corp/typst-agent --locked --features self-update --bin typst-agent typst-cli`.
 - To build from a checkout, run
   `cargo build --release -p typst-cli --bin typst-agent --features self-update`.
 

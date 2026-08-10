@@ -10,7 +10,8 @@ cleanup() {
 trap cleanup EXIT
 
 git -C "$repo" worktree add --detach "$tmp" HEAD >/dev/null
-git -C "$tmp" remote add upstream https://github.com/typst/typst.git
+git -C "$tmp" remote set-url upstream https://github.com/typst/typst.git 2>/dev/null \
+  || git -C "$tmp" remote add upstream https://github.com/typst/typst.git
 git -C "$tmp" remote set-url --push upstream https://invalid.example/typst/typst.git
 
 (cd "$tmp" && cargo agent eval --format json)

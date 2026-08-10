@@ -25,7 +25,7 @@ const ENV_PATH_SEP: char = if cfg!(windows) { ';' } else { ':' };
 /// The overall structure of the help.
 #[rustfmt::skip]
 const HELP_TEMPLATE: &str = "\
-Typst {version}
+Typst Agent {version}
 
 {usage-heading} {usage}
 
@@ -49,7 +49,7 @@ const STYLES: Styles = Styles::styled()
 /// The Typst compiler.
 #[derive(Debug, Clone, Parser)]
 #[clap(
-    name = "typst",
+    name = "typst-agent",
     version = format!(
         "{} ({})",
         typst_utils::version().raw(),

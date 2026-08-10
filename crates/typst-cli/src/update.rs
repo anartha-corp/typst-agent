@@ -14,8 +14,8 @@ use zip::ZipArchive;
 use crate::args::UpdateCommand;
 use crate::download;
 
-const TYPST_GITHUB_ORG: &str = "typst";
-const TYPST_REPO: &str = "typst";
+const AGENT_GITHUB_ORG: &str = "anartha-corp";
+const AGENT_REPO: &str = "typst-agent";
 
 /// Determine the asset to download based on the target platform.
 ///
@@ -33,13 +33,13 @@ macro_rules! determine_asset {
 
     (__impl: { $($origin:literal => $target:literal),* $(,)? }) => {
         match env!("TARGET") {
-            $($origin => concat!("typst-", $target),)*
-            _ => concat!("typst-", env!("TARGET")),
+            $($origin => concat!("typst-agent-", $target),)*
+            _ => concat!("typst-agent-", env!("TARGET")),
         }
     };
 }
 
-/// Self update the Typst CLI binary.
+/// Self-update the Typst Agent CLI binary.
 ///
 /// Fetches a target release or the latest release (if no version was specified)
 /// from GitHub, unpacks it and self replaces the current binary with the
@@ -58,7 +58,7 @@ pub fn update(command: &UpdateCommand) -> StrResult<()> {
         if !command.force && version < &current_tag {
             bail!(
                 "downgrading requires the --force flag: \
-                `typst update <VERSION> --force`",
+                `typst-agent update <VERSION> --force`",
             );
         }
     }
@@ -114,7 +114,7 @@ pub fn update(command: &UpdateCommand) -> StrResult<()> {
 
 /// Assets belonging to a GitHub release.
 ///
-/// Primarily used to download pre-compiled Typst CLI binaries.
+/// Primarily used to download pre-compiled Typst Agent CLI binaries.
 #[derive(Debug, Deserialize)]
 struct Asset {
     name: String,
@@ -137,10 +137,10 @@ impl Release {
     ) -> StrResult<Release> {
         let url = match tag {
             Some(tag) => format!(
-                "https://api.github.com/repos/{TYPST_GITHUB_ORG}/{TYPST_REPO}/releases/tags/v{tag}"
+                "https://api.github.com/repos/{AGENT_GITHUB_ORG}/{AGENT_REPO}/releases/tags/v{tag}"
             ),
             None => format!(
-                "https://api.github.com/repos/{TYPST_GITHUB_ORG}/{TYPST_REPO}/releases/latest",
+                "https://api.github.com/repos/{AGENT_GITHUB_ORG}/{AGENT_REPO}/releases/latest",
             ),
         };
 
@@ -246,7 +246,7 @@ fn update_needed(release: &Release) -> StrResult<bool> {
 
 /// Path to a potential backup file in the system.
 ///
-/// The backup will be placed as `typst_backup.part` in one of the following
+/// The backup will be placed as `typst-agent_backup.part` in one of the following
 /// directories, depending on the platform:
 ///  - `$XDG_STATE_HOME` or `~/.local/state` on Linux
 ///    - `$XDG_DATA_HOME` or `~/.local/share` if the above path isn't available
@@ -267,5 +267,5 @@ fn backup_path() -> StrResult<PathBuf> {
     let root_backup_dir =
         dirs::data_dir().ok_or("unable to locate local data directory")?;
 
-    Ok(root_backup_dir.join("typst").join("typst_backup.part"))
+    Ok(root_backup_dir.join("typst-agent").join("typst-agent_backup.part"))
 }

@@ -118,7 +118,7 @@ fn print_summary(
     out.reset()?;
     writeln!(
         out,
-        "typst watch {}",
+        "typst-agent watch {}",
         shell_escape::escape(template.entrypoint.to_string().into()),
     )?;
     writeln!(out)?;

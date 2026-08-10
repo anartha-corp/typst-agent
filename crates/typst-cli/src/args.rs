@@ -39,7 +39,7 @@ const AFTER_HELP: &str = color_print::cstr!("\
   <s>Tutorial:</>                 https://typst.app/docs/tutorial/
   <s>Reference documentation:</>  https://typst.app/docs/reference/
   <s>Templates & Packages:</>     https://typst.app/universe/
-  <s>Forum for questions:</>      https://forum.typst.app/
+  <s>Downstream discussions:</>  https://github.com/anartha-corp/typst-agent/discussions
 ");
 
 const STYLES: Styles = Styles::styled()
@@ -100,7 +100,7 @@ pub enum Command {
     /// Lists all discovered fonts in system and custom font paths.
     Fonts(FontsCommand),
 
-    /// Self update the Typst CLI.
+    /// Self-update the Typst Agent CLI.
     #[cfg_attr(not(feature = "self-update"), clap(hide = true))]
     Update(UpdateCommand),
 
@@ -249,7 +249,7 @@ pub struct UpdateCommand {
     pub force: bool,
 
     /// Reverts to the version from before the last update (only possible if
-    /// `typst update` has previously ran).
+    /// `typst-agent update` has previously ran).
     #[clap(
         long,
         default_value_t = false,

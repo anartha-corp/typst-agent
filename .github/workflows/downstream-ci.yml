@@ -28,6 +28,8 @@ jobs:
           git remote set-url --push upstream https://invalid.example/typst/typst.git
       - name: Install Rust
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          components: rustfmt
       - name: Doctor
         run: cargo agent doctor --format json
       - name: Policy check
@@ -76,7 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # pinned toolchain installer
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # pinned configurable toolchain installer
         with:
           toolchain: 1.92.0
       - run: cargo check --workspace --locked
@@ -86,9 +88,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # pinned configurable toolchain installer
         with:
-          toolchain: nightly
+          toolchain: nightly-2025-10-28
       - run: cargo check --manifest-path tests/fuzz/Cargo.toml --all-targets
 
   miri:
@@ -96,9 +98,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # pinned configurable toolchain installer
         with:
-          toolchain: nightly
+          toolchain: nightly-2025-10-28
           components: miri
       - run: cargo miri test -p typst-syntax
 

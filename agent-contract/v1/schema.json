@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/anartha-corp/typst-agent/agent-contract/v1/schema.json",
+  "title": "Typst Agent contract v1",
+  "type": "object",
+  "required": ["contract_version", "kind", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": { "const": "agent-contract/v1" },
+    "kind": {
+      "enum": ["AreaManifest", "InvariantRecord", "TaskContract", "ImpactReport", "VerificationEvidence", "ReviewEvidence", "UpstreamProvenance", "ReleaseManifest"]
+    },
+    "payload": { "type": "object", "additionalProperties": true }
+  }
+}

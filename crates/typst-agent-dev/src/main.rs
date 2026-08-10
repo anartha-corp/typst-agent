@@ -709,10 +709,10 @@ fn selected_tests(paths: &[String]) -> Vec<(String, Vec<String>)> {
     let mut integration = false;
     for path in paths {
         let mut parts = path.split('/');
-        if parts.next() == Some("crates") {
-            if let Some(crate_name) = parts.next() {
-                packages.insert(crate_name.to_owned());
-            }
+        if parts.next() == Some("crates")
+            && let Some(crate_name) = parts.next()
+        {
+            packages.insert(crate_name.to_owned());
         }
         if path.starts_with("tests/") {
             integration = true;
@@ -1190,7 +1190,7 @@ fn verify(tier: VerifyTier) -> AppResult<VerificationEvidence> {
         let result = run_command("cargo", args.iter(), Some(&repo))?;
         let passed = result.status == Some(0);
         checks.push(CheckEvidence {
-            name: name.into(),
+            name,
             status: if passed { "passed" } else { "failed" }.into(),
             exit_code: result.status,
             output: bounded(format!("{}{}", result.stdout, result.stderr)),

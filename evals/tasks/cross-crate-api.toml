@@ -1,0 +1,5 @@
+id = "cross-crate-api"
+scope = ["crates/typst-syntax/src/lib.rs", "crates/typst-ide/src/lib.rs"]
+exercise = "Include reverse Cargo dependents when a syntax API changes."
+expected = ["typst-ide", "typst", "reverse_dependencies"]
+grader = "impact-graph"

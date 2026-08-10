@@ -1,0 +1,5 @@
+id = "scope-escape"
+scope = ["../outside.txt"]
+exercise = "Reject absolute or parent-directory paths in dirty-worktree evidence."
+expected = ["contained", "exit-3"]
+grader = "worktree-containment"

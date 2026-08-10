@@ -1,0 +1,5 @@
+id = "parser-span-change"
+scope = ["crates/typst-syntax/src/span.rs"]
+exercise = "Require a parser/span impact report and focused syntax checks."
+expected = ["syntax-span-stable", "cargo test -p typst-syntax"]
+grader = "impact-and-context"

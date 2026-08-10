@@ -1,0 +1,5 @@
+id = "seeded-regression-review"
+scope = ["crates/typst-layout/src"]
+exercise = "Surface layout invariants and require review prompts in the pack."
+expected = ["layout-introspection", "layout-incremental", "review_prompts"]
+grader = "review-pack"

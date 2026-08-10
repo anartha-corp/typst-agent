@@ -1,0 +1,5 @@
+id = "navigation"
+scope = ["crates/typst-syntax/src/parser.rs"]
+exercise = "Select parser guidance and both syntax invariants from a fresh clone."
+expected = [".agents/areas/parser-spans.md", "syntax-parse-total", "syntax-span-stable"]
+grader = "context-json"

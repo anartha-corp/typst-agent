@@ -34,25 +34,26 @@ see [`GOVERNANCE.md`](GOVERNANCE.md), [`AI_DISCLOSURE.md`](AI_DISCLOSURE.md),
 
 ---
 
-## Upstream compiler documentation
+## Downstream status and upstream documentation
+
+The badges identify this downstream repository. The documentation and community
+links below refer to upstream Typst services because Typst Agent remains a
+downstream compiler; they are not claims of affiliation, support, or release
+ownership.
 
 <p align="center">
-  <a href="https://typst.app/docs/">
-    <img alt="Documentation" src="https://img.shields.io/website?down_message=offline&label=docs&up_color=007aff&up_message=online&url=https%3A%2F%2Ftypst.app%2Fdocs"
+  <a href="https://github.com/anartha-corp/typst-agent/releases">
+    <img alt="Typst Agent releases" src="https://img.shields.io/github/v/release/anartha-corp/typst-agent?label=downstream%20release"
   ></a>
-  <a href="https://typst.app/">
-    <img alt="Typst App" src="https://img.shields.io/website?down_message=offline&label=typst.app&up_color=239dad&up_message=online&url=https%3A%2F%2Ftypst.app"
+  <a href="https://github.com/anartha-corp/typst-agent/actions/workflows/downstream-ci.yml">
+    <img alt="Downstream CI" src="https://github.com/anartha-corp/typst-agent/actions/workflows/downstream-ci.yml/badge.svg"
   ></a>
-  <a href="https://discord.gg/2uDybryKPe">
-    <img alt="Discord Server" src="https://img.shields.io/discord/1054443721975922748?color=5865F2&label=discord&labelColor=555"
-  ></a>
-  <a href="https://github.com/typst/typst/blob/main/LICENSE">
+  <a href="https://github.com/anartha-corp/typst-agent/blob/main/LICENSE">
     <img alt="Apache-2 License" src="https://img.shields.io/badge/license-Apache%202-brightgreen"
   ></a>
-  <a href="https://typst.app/jobs/">
-    <img alt="Jobs at Typst" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Ftypst.app%2Fassets%2Fdata%2Fshields.json&query=%24.jobs.text&label=jobs&color=%23A561FF&cacheSeconds=1800"
-  ></a>
 </p>
+
+### Upstream compiler documentation
 
 Typst is a new markup-based typesetting system that is designed to be as powerful
 as LaTeX while being much easier to learn and use. Typst has:
@@ -138,43 +139,30 @@ Let's dissect what's going on:
 </details>
 
 ## Installation
-Typst's CLI is available from different sources:
 
-- You can get sources and pre-built binaries for the latest release of Typst
-  from the [releases page][releases]. Download the archive for your platform and
-  place it in a directory that is in your `PATH`. To stay up to date with future
-  releases, you can simply run `typst update`.
+Typst Agent binaries and images are published independently from upstream:
 
-- You can install Typst through different package managers. Note that the
-  versions in the package managers might lag behind the latest release.
-  - Linux:
-      - View [Typst on Repology][repology]
-      - View [Typst's Snap][snap]
-  - macOS: `brew install typst`
-  - Windows: `winget install --id Typst.Typst`
+- Download a platform archive from the [Typst Agent releases][agent-releases]
+  page, put `typst-agent` on your `PATH`, and run `typst-agent update` to use
+  the downstream self-updater.
+- Run the public container image with
+  `docker run --rm ghcr.io/anartha-corp/typst-agent:latest --help`.
+- With a [Rust][rust] toolchain, install the CLI directly from this repository:
+  `cargo install --git https://github.com/anartha-corp/typst-agent --locked --features self-update typst-cli`.
+- To build from a checkout, run
+  `cargo build --release -p typst-cli --bin typst-agent --features self-update`.
 
-- If you have a [Rust][rust] toolchain installed, you can install
-  - the latest released Typst version with
-    `cargo install --locked typst-cli`
-  - a development version with
-    `cargo install --git https://github.com/typst/typst --locked typst-cli`
-
-- Nix users can
-  - use the `typst` package with `nix-shell -p typst`
-  - build and run the [Typst flake](https://github.com/typst/typst-flake) with
-    `nix run github:typst/typst-flake -- --version`.
-
-- Docker users can run a prebuilt image with
-  `docker run ghcr.io/typst/typst:latest --help`.
+Typst Agent is not currently distributed through upstream package managers,
+and upstream `typst` packages or images are not Typst Agent releases.
 
 ## Usage
-Once you have installed Typst, you can use it like this:
+Once you have installed Typst Agent, you can use it like this:
 ```sh
 # Creates `file.pdf` in working directory.
-typst compile file.typ
+typst-agent compile file.typ
 
 # Creates a PDF file at the desired path.
-typst compile path/to/source.typ path/to/output.pdf
+typst-agent compile path/to/source.typ path/to/output.pdf
 ```
 
 You can also watch source files and automatically recompile on changes. This is
@@ -182,29 +170,29 @@ faster than compiling from scratch each time because Typst has incremental
 compilation.
 ```sh
 # Watches source files and recompiles on changes.
-typst watch file.typ
+typst-agent watch file.typ
 ```
 
 Typst further allows you to add custom font paths for your project and list all
 of the fonts it discovered:
 ```sh
 # Adds additional directories to search for fonts.
-typst compile --font-path path/to/fonts file.typ
+typst-agent compile --font-path path/to/fonts file.typ
 
 # Lists all of the discovered fonts in the system and the given directory.
-typst fonts --font-path path/to/fonts
+typst-agent fonts --font-path path/to/fonts
 
 # Or via environment variable (Linux syntax).
-TYPST_FONT_PATHS=path/to/fonts typst fonts
+TYPST_FONT_PATHS=path/to/fonts typst-agent fonts
 ```
 
 For other CLI subcommands and options, see below:
 ```sh
 # Prints available subcommands and options.
-typst help
+typst-agent help
 
 # Prints detailed usage of a subcommand.
-typst help watch
+typst-agent help watch
 ```
 
 If you prefer an integrated IDE-like experience with autocompletion and instant 
@@ -213,32 +201,39 @@ a community-created language server called
 [Tinymist](https://myriad-dreamin.github.io/tinymist/) which is integrated into 
 various editor extensions.
 
-## Community
-The main places where the community gathers are our [Forum][forum] and our
+## Upstream community
+
+The resources in this section are operated by the upstream Typst community;
+Typst Agent does not speak for or administer them.
+
+The main places where the community gathers are the upstream [Forum][forum] and
 [Discord server][discord]. The Forum is a great place to ask questions, help
 others, and share cool things you created with Typst. The Discord server is more
 suitable for quicker questions, discussions about contributing, or just to chat.
-We'd be happy to see you there!
+The upstream community will be happy to see you there!
 
-[Typst Universe][universe] is where the community shares templates and packages.
-If you want to share your own creations, you can submit them to our
-[package repository][packages].
+[Typst Universe][universe] is where the upstream community shares templates and
+packages. If you want to share your own creations, you can submit them to the
+upstream [package repository][packages].
 
-If you had a bad experience in our community, please [reach out to us][contact].
+If you had a bad experience in the upstream community, please [reach out to the
+upstream team][contact].
 
 ## Contributing
-We love to see contributions from the community. If you experience bugs, feel
-free to open an issue. If you would like to implement a new feature or bug fix,
-please follow the steps outlined in the [contribution guide][contributing].
 
-To build Typst yourself, first ensure that you have the
+We welcome downstream contributions. If you experience a bug or would like to
+implement a feature, read the local [contribution guide][contributing]. Changes
+must remain downstream; do not send commits, pull requests, or automation to
+`typst/typst`.
+
+To build Typst Agent yourself, first ensure that you have the
 [latest stable Rust][rust] installed. Then, clone this repository and build the
 CLI with the following commands:
 
 ```sh
-git clone https://github.com/typst/typst
-cd typst
-cargo build --release
+git clone https://github.com/anartha-corp/typst-agent
+cd typst-agent
+cargo build --release -p typst-cli --bin typst-agent --features self-update
 ```
 
 The optimized binary will be stored in `target/release/`.
@@ -297,7 +292,6 @@ We'd like to thank everyone who is supporting Typst's development, be it via
 [^1]: This list only includes contributions for our open-source work that exceed
     or are expected to exceed €10K.
 
-[docs]: https://typst.app/docs/
 [app]: https://typst.app/
 [discord]: https://discord.gg/2uDybryKPe
 [forum]: https://forum.typst.app/
@@ -308,12 +302,8 @@ We'd like to thank everyone who is supporting Typst's development, be it via
 [syntax]: https://typst.app/docs/reference/syntax/
 [scripting]: https://typst.app/docs/reference/scripting/
 [rust]: https://rustup.rs/
-[releases]: https://github.com/typst/typst/releases/
-[repology]: https://repology.org/project/typst/versions
+[agent-releases]: https://github.com/anartha-corp/typst-agent/releases/
 [contact]: https://typst.app/contact
-[architecture]: https://github.com/typst/typst/blob/main/docs/dev/architecture.md
-[contributing]: https://github.com/typst/typst/blob/main/CONTRIBUTING.md
+[contributing]: CONTRIBUTING.md
 [packages]: https://github.com/typst/packages/
-[`comemo`]: https://github.com/typst/comemo/
-[snap]: https://snapcraft.io/typst
 [GitHub sponsors]: https://github.com/sponsors/typst/

@@ -12,3 +12,6 @@ testit = "run --quiet --package=test-wrapper --"
 # compilation speed. Just `dev` makes the Typst compilation very slow, while
 # `release` makes the Rust compilation very slow.
 docit = "run --profile dev-fast --package=typst-docs --"
+
+# Deterministic downstream development control plane.
+agent = "run --package=typst-agent-dev --"

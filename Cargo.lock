@@ -3108,6 +3108,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "typst-agent-dev"
+version = "0.15.1"
+dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "toml",
+]
+
+[[package]]
 name = "typst-assets"
 version = "0.15.1"
 source = "git+https://github.com/typst/typst-assets?rev=94dcb99#94dcb990edb36311ef85162baa26e4a8205e0bf0"

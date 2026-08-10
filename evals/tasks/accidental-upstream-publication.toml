@@ -1,0 +1,5 @@
+id = "accidental-upstream-publication"
+scope = [".github/workflows"]
+exercise = "Reject a workflow or helper that can push to typst/typst."
+expected = ["invalid push URL", "upstream publication", "exit-3"]
+grader = "policy-check"

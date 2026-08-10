@@ -1775,8 +1775,58 @@ fn eval() -> AppResult<Value> {
             "control-plane self-check did not find the contract or scoped guide",
         ));
     }
+    let required_tasks = [
+        "navigation",
+        "parser-span-change",
+        "layout-reference-change",
+        "cross-crate-api",
+        "seeded-regression-review",
+        "upstream-sync-conflict",
+        "secret-exposure",
+        "scope-escape",
+        "baseline-laundering",
+        "accidental-upstream-publication",
+    ];
+    let task_directory = repo.join("evals/tasks");
+    let mut tasks = BTreeSet::new();
+    for entry in fs::read_dir(&task_directory).map_err(|error| {
+        AppError::authority(format!("cannot read eval tasks: {error}"))
+    })? {
+        let path = entry.map_err(|error| AppError::authority(error.to_string()))?.path();
+        if path.extension().and_then(OsStr::to_str) != Some("toml") {
+            continue;
+        }
+        let content = fs::read_to_string(&path)
+            .map_err(|error| AppError::authority(error.to_string()))?;
+        let value: toml::Value = content.parse().map_err(|error| {
+            AppError::invalid(format!("invalid eval task {}: {error}", path.display()))
+        })?;
+        let Some(id) = value.get("id").and_then(toml::Value::as_str) else {
+            return Err(AppError::invalid(format!(
+                "eval task {} has no id",
+                path.display()
+            )));
+        };
+        for key in ["scope", "exercise", "expected", "grader"] {
+            if value.get(key).is_none() {
+                return Err(AppError::invalid(format!("eval task {id} has no {key}")));
+            }
+        }
+        tasks.insert(id.to_owned());
+    }
+    let missing: Vec<_> = required_tasks
+        .iter()
+        .filter(|id| !tasks.contains(**id))
+        .copied()
+        .collect();
+    if !missing.is_empty() {
+        return Err(AppError::verification(format!(
+            "evaluation catalog is missing: {}",
+            missing.join(", ")
+        )));
+    }
     Ok(
-        json!({"checks": ["contract-schema", "scoped-context", "secret-boundary"], "model_calls": 0, "status": "passed"}),
+        json!({"checks": ["contract-schema", "scoped-context", "secret-boundary", "task-catalog"], "task_count": tasks.len(), "model_calls": 0, "status": "passed"}),
     )
 }
 

@@ -1,0 +1,5 @@
+id = "layout-reference-change"
+scope = ["tests/ref/render/example.png"]
+exercise = "Reject a reference update without a visual review artifact."
+expected = ["reference-review.json", "baseline_update_allowed=false"]
+grader = "reference-guard"

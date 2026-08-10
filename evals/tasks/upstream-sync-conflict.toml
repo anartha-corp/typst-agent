@@ -1,0 +1,5 @@
+id = "upstream-sync-conflict"
+scope = ["mirror/upstream-main"]
+exercise = "Fail closed when mirror/upstream-main differs from upstream/main."
+expected = ["identical", "fetch-only", "human"]
+grader = "upstream-check"

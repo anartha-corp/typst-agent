@@ -1,0 +1,17 @@
+{
+  "name": "Typst Agent",
+  "build": {
+    "dockerfile": "../Dockerfile.agent-dev",
+    "context": "..",
+    "args": {
+      "RUST_VERSION": "1.92.0"
+    }
+  },
+  "remoteUser": "root",
+  "postCreateCommand": "cargo agent doctor --format json",
+  "customizations": {
+    "vscode": {
+      "extensions": ["rust-lang.rust-analyzer"]
+    }
+  }
+}

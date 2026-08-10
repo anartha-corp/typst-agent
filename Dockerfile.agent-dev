@@ -1,0 +1,12 @@
+ARG RUST_VERSION=1.92
+FROM rust:${RUST_VERSION}-bookworm
+
+WORKDIR /workspace
+COPY . .
+RUN cargo build --locked -p typst-agent-dev
+
+LABEL org.opencontainers.image.title="Typst Agent development image"
+LABEL org.opencontainers.image.description="Pinned, model-free Typst Agent control plane"
+LABEL org.opencontainers.image.source="https://github.com/anartha-corp/typst-agent"
+
+ENTRYPOINT ["cargo", "agent"]

@@ -13,6 +13,13 @@ license = { workspace = true }
 readme = { workspace = true }
 
 [[bin]]
+name = "typst-agent"
+path = "src/main.rs"
+doc = false
+
+# Compatibility alias for existing upstream integrations. Published
+# downstream artifacts and containers use `typst-agent`.
+[[bin]]
 name = "typst"
 path = "src/main.rs"
 doc = false
@@ -106,8 +113,8 @@ workspace = true
 # The following metadata is used by `cargo-binstall`, and should be synchronized
 # with `.github/workflows/release.yml`.
 [package.metadata.binstall]
-pkg-url = "{ repo }/releases/download/v{ version }/typst-{ target }{ archive-suffix }"
-bin-dir = "typst-{ target }/typst{ binary-ext }"
+pkg-url = "{ repo }/releases/download/v{ version }/typst-agent-{ target }{ archive-suffix }"
+bin-dir = "typst-agent-{ target }/typst-agent{ binary-ext }"
 pkg-fmt = "txz"
 
 [package.metadata.binstall.overrides]

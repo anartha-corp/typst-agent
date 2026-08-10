@@ -190,9 +190,11 @@ fn extract_binary_from_zip(data: &[u8], asset_name: &str) -> StrResult<Vec<u8>> 
     let mut archive = ZipArchive::new(Cursor::new(data))
         .map_err(|err| eco_format!("failed to extract ZIP archive ({err})"))?;
 
-    let mut file =
-        archive.by_name(&format!("{asset_name}/typst.exe")).map_err(|err| {
-            eco_format!("failed to extract Typst binary from ZIP archive ({err})")
+    let mut file = archive
+        .by_name(&format!("{asset_name}/typst-agent.exe"))
+        .or_else(|_| archive.by_name(&format!("{asset_name}/typst.exe")))
+        .map_err(|err| {
+            eco_format!("failed to extract Typst Agent binary from ZIP archive ({err})")
         })?;
 
     let mut buffer = vec![];
@@ -211,8 +213,11 @@ fn extract_binary_from_tar_xz(data: &[u8]) -> StrResult<Vec<u8>> {
         .entries()
         .map_err(|err| eco_format!("failed to extract tar.xz archive ({err})"))?
         .filter_map(Result::ok)
-        .find(|e| e.path().unwrap_or_default().ends_with("typst"))
-        .ok_or("tar.xz archive did not contain Typst binary")?;
+        .find(|e| {
+            let path = e.path().unwrap_or_default();
+            path.ends_with("typst-agent") || path.ends_with("typst")
+        })
+        .ok_or("tar.xz archive did not contain Typst Agent binary")?;
 
     let mut buffer = vec![];
     file.read_to_end(&mut buffer).map_err(|err| {

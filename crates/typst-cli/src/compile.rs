@@ -80,10 +80,10 @@ pub struct CompileConfig {
     pub deps_format: DepsFormat,
     /// The PPI (pixels per inch) to use for PNG export.
     pub ppi: f64,
-    /// The export cache for images, used for caching output files in `typst
-    /// watch` sessions with images.
+    /// The export cache for images, used for caching output files in
+    /// `typst-agent watch` sessions with images.
     pub export_cache: ExportCache,
-    /// Server for `typst watch` to HTML.
+    /// Server for `typst-agent watch` to HTML.
     #[cfg(feature = "http-server")]
     pub server: Option<HttpServer>,
 }

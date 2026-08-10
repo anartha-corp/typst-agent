@@ -96,8 +96,8 @@ impl Settings {
         let Self { self_update, http_server } = self;
 
         [
-            ("self-update", self_update, "Update Typst via `typst update`"),
-            ("http-server", http_server, "Serve HTML via `typst watch`"),
+            ("self-update", self_update, "Update Typst Agent via `typst-agent update`"),
+            ("http-server", http_server, "Serve HTML via `typst-agent watch`"),
         ]
         .into_iter()
         .map(|(key, val, desc)| KeyValDesc { key, val: Value::Bool(*val), desc })

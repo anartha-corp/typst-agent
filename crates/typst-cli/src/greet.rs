@@ -1,6 +1,6 @@
 use std::io::{self, Read};
 
-/// This is shown to users who just type `typst` the first time.
+/// This is shown to users who just type `typst-agent` the first time.
 #[rustfmt::skip]
 const GREETING: &str = color_print::cstr!("\
 <s>Welcome to Typst, we are glad to have you here!</> ❤️
@@ -11,14 +11,15 @@ project, <s>choose a template</> on <u>https://typst.app/universe/</>.
 
 Here are the <s>most important commands</> you will be using:
 
-- Compile a file once: <c!>typst compile file.typ</>
-- Compile a file on every change: <c!>typst watch file.typ</>
-- Set up a project from a template: <c!>typst init @preview/<<TEMPLATE>></>
+- Compile a file once: <c!>typst-agent compile file.typ</>
+- Compile a file on every change: <c!>typst-agent watch file.typ</>
+- Set up a project from a template: <c!>typst-agent init @preview/<<TEMPLATE>></>
 
-Learn more about these commands by running <c!>typst help</>.
+Learn more about these commands by running <c!>typst-agent help</>.
 
-If you have a question, we and our community would be glad to help you out on \
-the <s>Typst Forum</> at <u>https://forum.typst.app/</>.
+If you have a question, we and our community would be glad to help you out in \
+the <s>Typst Agent discussions</> at \
+<u>https://github.com/anartha-corp/typst-agent/discussions</>.
 
 Happy Typsting!
 ");
@@ -26,7 +27,7 @@ Happy Typsting!
 /// Greets (and exists) if not yet greeted.
 pub fn greet() {
     let Some(data_dir) = dirs::data_dir() else { return };
-    let path = data_dir.join("typst").join("greeted");
+    let path = data_dir.join("typst-agent").join("greeted");
 
     let version = typst::utils::version().raw();
     let prev_greet = std::fs::read_to_string(&path).ok();
@@ -41,11 +42,11 @@ pub fn greet() {
 /// Prints a colorized and line-wrapped message.
 fn print_and_exit(message: &'static str) -> ! {
     // Abuse clap for line wrapping ...
-    let err = clap::Command::new("typst")
+    let err = clap::Command::new("typst-agent")
         .max_term_width(80)
         .help_template("{about}")
         .about(message)
-        .try_get_matches_from(["typst", "--help"])
+        .try_get_matches_from(["typst-agent", "--help"])
         .unwrap_err();
     let _ = err.print();
 

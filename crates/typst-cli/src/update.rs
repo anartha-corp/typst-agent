@@ -190,12 +190,16 @@ fn extract_binary_from_zip(data: &[u8], asset_name: &str) -> StrResult<Vec<u8>> 
     let mut archive = ZipArchive::new(Cursor::new(data))
         .map_err(|err| eco_format!("failed to extract ZIP archive ({err})"))?;
 
-    let mut file = archive
-        .by_name(&format!("{asset_name}/typst-agent.exe"))
-        .or_else(|_| archive.by_name(&format!("{asset_name}/typst.exe")))
-        .map_err(|err| {
-            eco_format!("failed to extract Typst Agent binary from ZIP archive ({err})")
-        })?;
+    let agent_name = format!("{asset_name}/typst-agent.exe");
+    let upstream_name = format!("{asset_name}/typst.exe");
+    let binary_name = if archive.file_names().any(|name| name == agent_name) {
+        agent_name
+    } else {
+        upstream_name
+    };
+    let mut file = archive.by_name(&binary_name).map_err(|err| {
+        eco_format!("failed to extract Typst Agent binary from ZIP archive ({err})")
+    })?;
 
     let mut buffer = vec![];
     file.read_to_end(&mut buffer).map_err(|err| {

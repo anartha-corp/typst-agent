@@ -242,6 +242,9 @@ struct PolicyReport {
 struct VerificationEvidence {
     tier: String,
     checks: Vec<CheckEvidence>,
+    selected_tests: Vec<String>,
+    dirty_paths: Vec<String>,
+    reference_paths: Vec<String>,
     status: String,
 }
 
@@ -669,6 +672,68 @@ fn normalize_repo_path(path: &str) -> AppResult<String> {
     Ok(normalized)
 }
 
+fn dirty_paths(repo: &Path) -> AppResult<Vec<String>> {
+    changed_paths(repo, None)
+}
+
+fn reference_paths(paths: &[String]) -> Vec<String> {
+    paths
+        .iter()
+        .filter(|path| {
+            path.starts_with("tests/ref/")
+                || path.starts_with("tests/suite/")
+                || path.ends_with(".snap")
+        })
+        .cloned()
+        .collect()
+}
+
+fn assert_contained(paths: &[String]) -> AppResult<()> {
+    let outside = paths
+        .iter()
+        .filter(|path| path.starts_with('/') || path.split('/').any(|part| part == ".."))
+        .cloned()
+        .collect::<Vec<_>>();
+    if outside.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::policy(format!(
+            "worktree path escapes repository scope: {}",
+            outside.join(", ")
+        )))
+    }
+}
+
+fn selected_tests(paths: &[String]) -> Vec<(String, Vec<String>)> {
+    let mut packages = BTreeSet::new();
+    let mut integration = false;
+    for path in paths {
+        let mut parts = path.split('/');
+        if parts.next() == Some("crates") {
+            if let Some(crate_name) = parts.next() {
+                packages.insert(crate_name.to_owned());
+            }
+        }
+        if path.starts_with("tests/") {
+            integration = true;
+        }
+    }
+    let mut commands = packages
+        .into_iter()
+        .filter(|package| package != "typst-agent-dev")
+        .map(|package| {
+            (
+                format!("cargo test -p {package}"),
+                vec!["test".into(), "-p".into(), package],
+            )
+        })
+        .collect::<Vec<_>>();
+    if integration {
+        commands.push(("cargo testit".into(), vec!["testit".into()]));
+    }
+    commands
+}
+
 fn context(args: &ContextArgs) -> AppResult<ContextReport> {
     let repo = root()?;
     let paths = if args.paths.is_empty() {
@@ -821,13 +886,28 @@ fn transitive_dependents(
 }
 
 fn cargo_metadata(repo: &Path) -> AppResult<CargoMetadata> {
-    let output = run_command(
-        "cargo",
-        ["metadata", "--format-version", "1", "--no-deps"],
-        Some(repo),
-    )?;
-    let text = require_success(output, "cargo metadata")?;
-    serde_json::from_str(&text)
+    let output = Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .current_dir(repo)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| {
+            AppError::authority(format!("failed to run cargo metadata: {error}"))
+        })?;
+    if !output.status.success() {
+        return Err(AppError::authority(format!(
+            "cargo metadata failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let start = text
+        .find('{')
+        .ok_or_else(|| AppError::authority("cargo metadata did not return JSON"))?;
+    let end = text
+        .rfind('}')
+        .ok_or_else(|| AppError::authority("cargo metadata JSON is incomplete"))?;
+    serde_json::from_str(&text[start..=end])
         .map_err(|error| AppError::authority(format!("invalid cargo metadata: {error}")))
 }
 
@@ -1053,6 +1133,17 @@ fn contains_token(text: &str, marker: &str, minimum_suffix: usize) -> bool {
 }
 
 fn verify(tier: VerifyTier) -> AppResult<VerificationEvidence> {
+    let repo = root()?;
+    let dirty = dirty_paths(&repo)?;
+    assert_contained(&dirty)?;
+    let references = reference_paths(&dirty);
+    if !references.is_empty() && !repo.join(".tmp/agent/reference-review.json").is_file()
+    {
+        return Err(AppError::policy(format!(
+            "reference changes require .tmp/agent/reference-review.json: {}",
+            references.join(", ")
+        )));
+    }
     let mut checks = Vec::new();
     let policy = match policy_check() {
         Ok(_) => CheckEvidence {
@@ -1070,22 +1161,33 @@ fn verify(tier: VerifyTier) -> AppResult<VerificationEvidence> {
     };
     let policy_failed = policy.status == "failed";
     checks.push(policy);
-    let mut commands: Vec<(&str, Vec<&str>)> = vec![
-        ("cargo fmt --check", vec!["fmt", "--all", "--check"]),
-        ("cargo check -p typst-agent-dev", vec!["check", "-p", "typst-agent-dev"]),
+    let mut commands: Vec<(String, Vec<String>)> = vec![
+        (
+            "cargo fmt --check".into(),
+            vec!["fmt".into(), "--all".into(), "--check".into()],
+        ),
+        (
+            "cargo check -p typst-agent-dev".into(),
+            vec!["check".into(), "-p".into(), "typst-agent-dev".into()],
+        ),
     ];
     if matches!(tier, VerifyTier::Pr | VerifyTier::Full) {
         commands.push((
-            "cargo test -p typst-agent-dev",
-            vec!["test", "-p", "typst-agent-dev"],
+            "cargo test -p typst-agent-dev".into(),
+            vec!["test".into(), "-p".into(), "typst-agent-dev".into()],
         ));
+        if !matches!(tier, VerifyTier::Full) {
+            commands.extend(selected_tests(&dirty));
+        }
     }
     if matches!(tier, VerifyTier::Full) {
-        commands.push(("cargo test --workspace", vec!["test", "--workspace"]));
+        commands.push((
+            "cargo test --workspace".into(),
+            vec!["test".into(), "--workspace".into()],
+        ));
     }
-    let repo = root()?;
     for (name, args) in commands {
-        let result = run_command("cargo", args, Some(&repo))?;
+        let result = run_command("cargo", args.iter(), Some(&repo))?;
         let passed = result.status == Some(0);
         checks.push(CheckEvidence {
             name: name.into(),
@@ -1101,6 +1203,12 @@ fn verify(tier: VerifyTier) -> AppResult<VerificationEvidence> {
     let evidence = VerificationEvidence {
         tier: format!("{tier:?}").to_lowercase(),
         checks,
+        selected_tests: selected_tests(&dirty)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect(),
+        dirty_paths: dirty,
+        reference_paths: references,
         status: if failed { "failed".into() } else { "passed".into() },
     };
     if failed {
@@ -1114,6 +1222,9 @@ fn verify(tier: VerifyTier) -> AppResult<VerificationEvidence> {
 
 fn review_pack(base: &str) -> AppResult<Value> {
     let repo = root()?;
+    let dirty = dirty_paths(&repo)?;
+    assert_contained(&dirty)?;
+    let references = reference_paths(&dirty);
     let impact_report = impact(base)?;
     let policy = policy_check()?;
     let pack = json!({
@@ -1121,6 +1232,8 @@ fn review_pack(base: &str) -> AppResult<Value> {
         "base": base,
         "impact": impact_report,
         "policy": policy,
+        "dirty_worktree": {"paths": dirty, "contained": true},
+        "reference_guard": {"paths": references, "approval_required": true, "baseline_update_allowed": false},
         "human_approval_required": true,
         "reference_updates_allowed": false,
     });
@@ -1176,9 +1289,54 @@ fn upstream_check() -> AppResult<Value> {
     if push_url.contains("github.com/typst/typst") {
         return Err(AppError::policy("upstream push URL is writable"));
     }
+    let remote_tags = remote_tags(&repo)?;
+    let local_tags = local_tags(&repo)?;
+    if remote_tags != local_tags {
+        return Err(AppError::policy(format!(
+            "mirrored tags differ (upstream={}, local={})",
+            remote_tags.len(),
+            local_tags.len()
+        )));
+    }
     Ok(
-        json!({"mirror": mirror, "upstream": fetched, "identical": true, "push_url": push_url, "tags": "fetched-and-preserved"}),
+        json!({"mirror": mirror, "upstream": fetched, "identical": true, "push_url": push_url, "tags": {"count": local_tags.len(), "identical": true}}),
     )
+}
+
+fn remote_tags(repo: &Path) -> AppResult<BTreeMap<String, String>> {
+    let output = require_success(
+        run_command("git", ["ls-remote", "--tags", "upstream"], Some(repo))?,
+        "upstream tags",
+    )?;
+    Ok(output
+        .lines()
+        .filter_map(|line| {
+            let (sha, reference) = line.split_once('\t')?;
+            let name = reference.strip_prefix("refs/tags/")?;
+            if name.ends_with("^{}") {
+                return None;
+            }
+            Some((name.to_owned(), sha.to_owned()))
+        })
+        .collect())
+}
+
+fn local_tags(repo: &Path) -> AppResult<BTreeMap<String, String>> {
+    let output = require_success(
+        run_command(
+            "git",
+            ["for-each-ref", "--format=%(objectname)\t%(refname:strip=2)", "refs/tags"],
+            Some(repo),
+        )?,
+        "local tags",
+    )?;
+    Ok(output
+        .lines()
+        .filter_map(|line| {
+            let (sha, name) = line.split_once('\t')?;
+            Some((name.to_owned(), sha.to_owned()))
+        })
+        .collect())
 }
 
 fn eval() -> AppResult<Value> {

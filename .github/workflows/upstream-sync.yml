@@ -1,0 +1,63 @@
+name: Upstream sync rehearsal
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 2 * * 2'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    name: Fetch upstream and prepare compatibility PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+      - name: Configure fetch-only upstream
+        run: |
+          git remote add upstream https://github.com/typst/typst.git
+          git remote set-url --push upstream https://invalid.example/typst/typst.git
+      - name: Fetch and receipt
+        run: |
+          mkdir -p .tmp/agent
+          scripts/upstream-sync.sh | tee .tmp/agent/upstream-sync.txt
+      - name: Update downstream mirror only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          upstream_sha="$(git rev-parse refs/remotes/upstream/main)"
+          old_sha="$(git rev-parse refs/heads/mirror/upstream-main 2>/dev/null || true)"
+          git update-ref refs/heads/mirror/upstream-main "$upstream_sha"
+          if [[ -n "$old_sha" && "$old_sha" != "$upstream_sha" ]]; then
+            git push origin "${old_sha}:refs/heads/mirror/upstream-main" --force-with-lease="refs/heads/mirror/upstream-main:${old_sha}"
+          else
+            git push origin "refs/heads/mirror/upstream-main:refs/heads/mirror/upstream-main"
+          fi
+      - name: Prepare compatibility branch
+        id: branch
+        run: |
+          upstream_sha="$(git rev-parse refs/remotes/upstream/main)"
+          branch="execute-plan/upstream-sync-${upstream_sha:0:12}"
+          git switch -c "$branch" main
+          if git merge --no-ff --no-edit upstream/main; then
+            git push origin "$branch"
+            echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          else
+            echo 'Upstream merge conflicts require a human compatibility branch.' >&2
+            exit 1
+          fi
+      - name: Verify and open review-only PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cargo agent upstream-check --format json
+          cargo agent policy-check --format json
+          gh pr create --base main --head "${{ steps.branch.outputs.branch }}" \
+            --title "chore: sync upstream" \
+            --body $'Automated upstream compatibility rehearsal.\n\nMerge and release require human approval; this workflow never auto-merges.'

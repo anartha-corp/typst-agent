@@ -4,7 +4,9 @@
 name: Create Release Assets
 on:
   release:
-    types: [published]
+    # A created release remains a draft until the human-gated manifest job
+    # publishes it after checksums, provenance, and attestations are complete.
+    types: [created]
 
 jobs:
   build-binaries:
@@ -150,3 +152,7 @@ jobs:
         uses: actions/attest-build-provenance@520d128f165991a6c774bcb264f323e3d70747f4 # v2.2.0
         with:
           subject-path: .tmp/agent/release-manifest.json
+      - name: Publish after human approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${{ github.ref_name }}" --draft=false

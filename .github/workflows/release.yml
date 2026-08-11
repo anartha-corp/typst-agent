@@ -17,6 +17,7 @@ concurrency:
 env:
   RELEASE_TAG: ${{ inputs.release_tag }}
   CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
 
 jobs:
   authorize:
@@ -434,6 +435,7 @@ jobs:
           git remote get-url upstream >/dev/null 2>&1 || \
             git remote add upstream https://github.com/typst/typst.git
           git remote set-url --push upstream https://invalid.example/typst/typst.git
+          scripts/upstream-sync.sh
           cargo agent upstream-check --format json
           cargo agent policy-check --format json
           cargo agent release-manifest \
@@ -446,6 +448,9 @@ jobs:
              and .payload.downstream_sha == $sha
              and ([.. | strings | test("placeholder|unknown|null"; "i")] | all(. == false))' \
             .tmp/agent/release-manifest.json
+      - name: Bootstrap and verify public GHCR namespaces
+        shell: bash
+        run: scripts/release-ghcr-bootstrap.sh
       - name: Preflight immutable names and create draft
         id: draft
         env:
@@ -591,7 +596,7 @@ jobs:
           docker run --rm \
             '${{ steps.publish-images.outputs.dev_ref }}@${{ steps.publish-images.outputs.dev_digest }}' \
             doctor --format json | grep -F '"status": "ok"'
-      - name: Move latest aliases and publish release last
+      - name: Move public aliases and publish release last
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -604,6 +609,12 @@ jobs:
             '${{ steps.publish-images.outputs.compiler_ref }}@${{ steps.publish-images.outputs.compiler_digest }}'
           docker buildx imagetools create \
             --tag '${{ steps.publish-images.outputs.dev_ref }}:latest' \
+            '${{ steps.publish-images.outputs.dev_ref }}@${{ steps.publish-images.outputs.dev_digest }}'
+          docker buildx imagetools create \
+            --tag '${{ steps.publish-images.outputs.compiler_ref }}:visibility-bootstrap' \
+            '${{ steps.publish-images.outputs.compiler_ref }}@${{ steps.publish-images.outputs.compiler_digest }}'
+          docker buildx imagetools create \
+            --tag '${{ steps.publish-images.outputs.dev_ref }}:visibility-bootstrap' \
             '${{ steps.publish-images.outputs.dev_ref }}@${{ steps.publish-images.outputs.dev_digest }}'
           gh release edit "$RELEASE_TAG" --draft=false --latest
       - name: Verify anonymous release download

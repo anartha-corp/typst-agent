@@ -16,6 +16,16 @@ fn test_help() {
 }
 
 #[test]
+fn test_downstream_version_identity() {
+    let output = exec().arg("--version").must_succeed();
+    output
+        .stdout
+        .must_contain("typst-agent 0.15.1-agent.0")
+        .must_contain("upstream Typst 0.15.1 (a51e028041cac426f97d34335bb01d8f1d8e5e8f)")
+        .must_contain("downstream build ");
+}
+
+#[test]
 fn test_compile_pdf() {
     let project = tempfs();
     let title = "Hello from CLI";
@@ -31,8 +41,8 @@ fn test_compile_pdf_version() {
     let version = output
         .stdout
         .lines()
-        .flat_map(|line| line.split_whitespace())
-        .nth(1)
+        .find(|line| line.starts_with("upstream Typst "))
+        .and_then(|line| line.split_whitespace().nth(2))
         .unwrap();
     let hello = project.write("hello.typ", "Hi");
     exec().arg("compile").arg(&hello).must_succeed();
@@ -276,7 +286,7 @@ fn test_target_available() {
 
 /// Executes a command with the Typst CLI.
 fn exec() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_typst"))
+    Command::new(env!("CARGO_BIN_EXE_typst-agent"))
 }
 
 trait CommandExt {

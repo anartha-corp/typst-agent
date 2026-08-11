@@ -6,6 +6,7 @@ mod download;
 mod eval;
 mod fonts;
 mod greet;
+mod identity;
 mod info;
 mod init;
 mod packages;

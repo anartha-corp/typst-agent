@@ -13,6 +13,7 @@ use zip::ZipArchive;
 
 use crate::args::UpdateCommand;
 use crate::download;
+use crate::identity;
 
 const AGENT_GITHUB_ORG: &str = "anartha-corp";
 const AGENT_REPO: &str = "typst-agent";
@@ -46,7 +47,7 @@ macro_rules! determine_asset {
 /// pre-compiled asset from the downloaded release.
 pub fn update(command: &UpdateCommand) -> StrResult<()> {
     if let Some(ref version) = command.version {
-        let current_tag = typst::utils::version().raw().parse().unwrap();
+        let current_tag: Version = identity::RELEASE.parse().unwrap();
 
         if version < &Version::new(0, 8, 0) {
             eprintln!(
@@ -190,13 +191,7 @@ fn extract_binary_from_zip(data: &[u8], asset_name: &str) -> StrResult<Vec<u8>> 
     let mut archive = ZipArchive::new(Cursor::new(data))
         .map_err(|err| eco_format!("failed to extract ZIP archive ({err})"))?;
 
-    let agent_name = format!("{asset_name}/typst-agent.exe");
-    let upstream_name = format!("{asset_name}/typst.exe");
-    let binary_name = if archive.file_names().any(|name| name == agent_name) {
-        agent_name
-    } else {
-        upstream_name
-    };
+    let binary_name = format!("{asset_name}/typst-agent.exe");
     let mut file = archive.by_name(&binary_name).map_err(|err| {
         eco_format!("failed to extract Typst Agent binary from ZIP archive ({err})")
     })?;
@@ -219,7 +214,7 @@ fn extract_binary_from_tar_xz(data: &[u8]) -> StrResult<Vec<u8>> {
         .filter_map(Result::ok)
         .find(|e| {
             let path = e.path().unwrap_or_default();
-            path.ends_with("typst-agent") || path.ends_with("typst")
+            path.ends_with("typst-agent")
         })
         .ok_or("tar.xz archive did not contain Typst Agent binary")?;
 
@@ -233,7 +228,7 @@ fn extract_binary_from_tar_xz(data: &[u8]) -> StrResult<Vec<u8>> {
 
 /// Compare the release version to the CLI version to see if an update is needed.
 fn update_needed(release: &Release) -> StrResult<bool> {
-    let current_tag: Version = typst::utils::version().raw().parse().unwrap();
+    let current_tag: Version = identity::RELEASE.parse().unwrap();
     let new_tag: Version = release
         .tag_name
         .strip_prefix('v')

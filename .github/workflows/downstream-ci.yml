@@ -41,7 +41,8 @@ jobs:
           EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
         run: |
           base="$EVENT_BASE_SHA"
-          if [[ -z "$base" || "$base" == 0000000000000000000000000000000000000000 ]]; then
+          if [[ -z "$base" || "$base" == 0000000000000000000000000000000000000000 ]] || \
+            ! git rev-parse --verify "$base^{commit}" >/dev/null 2>&1; then
             base="$(git merge-base origin/main HEAD)"
           fi
           git rev-parse --verify "$base^{commit}" >/dev/null
@@ -74,7 +75,8 @@ jobs:
           EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
         run: |
           base="$EVENT_BASE_SHA"
-          if [[ -z "$base" || "$base" == 0000000000000000000000000000000000000000 ]]; then
+          if [[ -z "$base" || "$base" == 0000000000000000000000000000000000000000 ]] || \
+            ! git rev-parse --verify "$base^{commit}" >/dev/null 2>&1; then
             base="$(git merge-base origin/main HEAD)"
           fi
           paths="$(
@@ -261,7 +263,8 @@ jobs:
           EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
         run: |
           base="$EVENT_BASE_SHA"
-          if [[ -z "$base" || "$base" == 0000000000000000000000000000000000000000 ]]; then
+          if [[ -z "$base" || "$base" == 0000000000000000000000000000000000000000 ]] || \
+            ! git rev-parse --verify "$base^{commit}" >/dev/null 2>&1; then
             base="$(git merge-base origin/main HEAD)"
           fi
           git log --no-merges --format='%H%x00%B%x00' "$base..HEAD" | \

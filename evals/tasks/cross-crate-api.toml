@@ -1,5 +1,27 @@
 id = "cross-crate-api"
-scope = ["crates/typst-syntax/src/lib.rs", "crates/typst-ide/src/lib.rs"]
-exercise = "Include reverse Cargo dependents when a syntax API changes."
-expected = ["typst-ide", "typst", "reverse_dependencies"]
-grader = "impact-graph"
+scope = ["crates/typst-syntax/eval-cross-crate-api.txt"]
+
+[[operations]]
+kind = "apply-patch"
+fixture = "evals/fixtures/cross-crate-api.patch"
+
+[[operations]]
+kind = "commit"
+message = "eval: seed syntax API change"
+paths = ["crates/typst-syntax/eval-cross-crate-api.txt"]
+
+[[operations]]
+kind = "agent"
+capture = "impact"
+command = "impact"
+
+[[graders]]
+kind = "exit-code"
+capture = "impact"
+expected = 0
+
+[[graders]]
+kind = "json-contains"
+capture = "impact"
+pointer = "/payload/reverse_dependencies"
+values = ["typst-ide", "typst", "typst-cli"]

@@ -77,8 +77,17 @@
         "invariant_ids": ["release-provenance", "release-human-gate"]
       },
       {
+        "id": "agent-evaluation",
+        "path_prefixes": ["evals/"],
+        "exact_paths": ["scripts/agent-eval.sh"],
+        "authority_sources": ["evals/tasks/", "evals/fixtures/", "crates/typst-agent-dev/src/main.rs"],
+        "guide": ".agents/areas/evaluation.md",
+        "required_checks": ["cargo agent eval", "cargo test -p typst-agent-dev"],
+        "invariant_ids": ["eval-deterministic", "release-human-gate"]
+      },
+      {
         "id": "agent-contract",
-        "path_prefixes": [".agents/", "agent-contract/", "crates/typst-agent-dev/"],
+        "path_prefixes": [".agents/", "agent-contract/", "crates/typst-agent-dev/", "evals/"],
         "exact_paths": ["AGENTS.md"],
         "authority_sources": ["AGENTS.md", "agent-contract/v1/schema.json", ".agents/area-manifest.json", ".agents/invariants.yml"],
         "guide": "AGENTS.md",

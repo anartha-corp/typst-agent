@@ -1,5 +1,39 @@
 id = "parser-span-change"
-scope = ["crates/typst-syntax/src/span.rs"]
-exercise = "Require a parser/span impact report and focused syntax checks."
-expected = ["syntax-span-stable", "cargo test -p typst-syntax"]
-grader = "impact-and-context"
+scope = ["crates/typst-syntax/eval-parser-span.txt"]
+
+[[operations]]
+kind = "apply-patch"
+fixture = "evals/fixtures/parser-span-change.patch"
+
+[[operations]]
+kind = "commit"
+message = "eval: seed parser span change"
+paths = ["crates/typst-syntax/eval-parser-span.txt"]
+
+[[operations]]
+kind = "agent"
+capture = "impact"
+command = "impact"
+
+[[operations]]
+kind = "agent"
+capture = "context"
+command = "context"
+paths = ["crates/typst-syntax/eval-parser-span.txt"]
+
+[[graders]]
+kind = "exit-code"
+capture = "impact"
+expected = 0
+
+[[graders]]
+kind = "json-contains"
+capture = "impact"
+pointer = "/payload"
+values = ["typst-syntax", "typst-ide"]
+
+[[graders]]
+kind = "json-contains"
+capture = "context"
+pointer = "/payload"
+values = ["syntax-span-stable", "cargo test -p typst-syntax"]

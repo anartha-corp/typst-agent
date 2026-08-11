@@ -1,5 +1,23 @@
 id = "scope-escape"
 scope = ["../outside.txt"]
-exercise = "Reject absolute or parent-directory paths in dirty-worktree evidence."
-expected = ["contained", "exit-3"]
-grader = "worktree-containment"
+
+[[operations]]
+kind = "agent"
+capture = "context"
+command = "context"
+paths = ["../outside.txt"]
+
+[[graders]]
+kind = "exit-code"
+capture = "context"
+expected = 2
+
+[[graders]]
+kind = "json-contains"
+capture = "context"
+pointer = "/payload/message"
+values = ["relative and contained"]
+
+[[graders]]
+kind = "file-absent"
+path = "../outside.txt"

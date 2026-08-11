@@ -1,5 +1,22 @@
 id = "layout-reference-change"
-scope = ["tests/ref/render/example.png"]
-exercise = "Reject a reference update without a visual review artifact."
-expected = ["reference-review.json", "baseline_update_allowed=false"]
-grader = "reference-guard"
+scope = ["tests/ref/eval-layout.hash"]
+
+[[operations]]
+kind = "apply-patch"
+fixture = "evals/fixtures/layout-reference-change.patch"
+
+[[operations]]
+kind = "agent"
+capture = "verify"
+command = "verify-fast"
+
+[[graders]]
+kind = "exit-code"
+capture = "verify"
+expected = 3
+
+[[graders]]
+kind = "json-contains"
+capture = "verify"
+pointer = "/payload/message"
+values = ["current-head human approval", ".tmp evidence is not accepted"]

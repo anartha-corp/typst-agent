@@ -1,0 +1,6 @@
+diff --git a/tests/ref/eval-layout.hash b/tests/ref/eval-layout.hash
+new file mode 100644
+--- /dev/null
++++ b/tests/ref/eval-layout.hash
+@@ -0,0 +1 @@
++0000000000000000000000000000000000000000000000000000000000000000

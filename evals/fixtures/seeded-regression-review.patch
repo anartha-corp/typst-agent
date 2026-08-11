@@ -1,0 +1,6 @@
+diff --git a/crates/typst-layout/eval-seeded-regression.txt b/crates/typst-layout/eval-seeded-regression.txt
+new file mode 100644
+--- /dev/null
++++ b/crates/typst-layout/eval-seeded-regression.txt
+@@ -0,0 +1 @@
++Seeded dirty layout regression requiring current review evidence.

@@ -19,6 +19,7 @@ env:
 jobs:
   policy:
     name: Policy and agent PR lane
+    needs: reference-detect
     runs-on: ubuntu-latest
     steps:
       - name: Checkout full history
@@ -50,8 +51,10 @@ jobs:
           cargo agent doctor --format json
           cargo agent policy-check --format json
       - name: Diff-aware PR verification
+        if: ${{ needs.reference-detect.outputs.changed != 'true' }}
         run: cargo agent verify --tier pr --base "${{ steps.base.outputs.sha }}" --format json
       - name: Current-head review evidence
+        if: ${{ needs.reference-detect.outputs.changed != 'true' }}
         run: cargo agent review-pack --base "${{ steps.base.outputs.sha }}" --format json
 
   reference-detect:
@@ -148,7 +151,9 @@ jobs:
             '{head_sha: $head_sha, reviewer: $reviewer, reference_paths: $reference_paths, visual_report: $visual_report, invariant_impact: $invariant_impact}' \
             > "$approval"
       - name: Verify current-head reference evidence
-        run: cargo agent verify --tier pr --base "${{ needs.reference-detect.outputs.base }}" --format json
+        run: |
+          cargo agent verify --tier pr --base "${{ needs.reference-detect.outputs.base }}" --format json
+          cargo agent review-pack --base "${{ needs.reference-detect.outputs.base }}" --format json
 
   fmt:
     name: Rustfmt

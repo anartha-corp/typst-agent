@@ -1,0 +1,390 @@
+name: Upstream synchronization
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 2 * * 2'
+  pull_request:
+
+permissions:
+  actions: read
+  contents: read
+  deployments: read
+
+concurrency:
+  group: upstream-sync-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'writer' }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Fetch upstream and prepare compatibility PR
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mint repository-scoped sync App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.TYPST_AGENT_SYNC_CLIENT_ID }}
+          owner: ${{ github.repository_owner }}
+          permission-contents: write
+          permission-pull-requests: write
+          private-key: ${{ secrets.TYPST_AGENT_SYNC_PRIVATE_KEY }}
+          repositories: typst-agent
+      - name: Require the dedicated App actor
+        env:
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: test "$APP_SLUG" = typst-agent-sync
+      - name: Checkout full history with the App token
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ steps.app-token.outputs.token }}
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          components: rustfmt
+      - name: Configure immutable identities and fetch-only upstream
+        run: |
+          git config user.name 'typst-agent-sync[bot]'
+          git config user.email 'typst-agent-sync[bot]@users.noreply.github.com'
+          git remote get-url upstream >/dev/null 2>&1 || \
+            git remote add upstream https://github.com/typst/typst.git
+          git remote set-url upstream https://github.com/typst/typst.git
+          git remote set-url --push upstream https://invalid.example/typst/typst.git
+          git fetch --no-tags origin \
+            refs/heads/mirror/upstream-main:refs/heads/mirror/upstream-main
+      - name: Fetch bounded upstream snapshot
+        run: |
+          mkdir -p .tmp/agent
+          scripts/upstream-sync.sh | tee .tmp/agent/upstream-sync.txt
+      - name: Materialize and validate local mirror snapshot
+        id: snapshot
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          old_sha="$(git rev-parse refs/heads/mirror/upstream-main)"
+          new_sha="$(git rev-parse refs/remotes/upstream/main)"
+          git update-ref refs/heads/mirror/upstream-main "$new_sha" "$old_sha"
+          missing_tags=0
+          while IFS=$'\t' read -r tag_sha tag; do
+            local_sha="$(git rev-parse "refs/tags/$tag" 2>/dev/null || true)"
+            if [[ -z "$local_sha" ]]; then
+              git update-ref "refs/tags/$tag" "$tag_sha" ''
+              missing_tags=$((missing_tags + 1))
+            else
+              test "$local_sha" = "$tag_sha"
+            fi
+          done < <(
+            git for-each-ref \
+              --format='%(objectname)%09%(refname:strip=3)' \
+              refs/remotes/upstream-tags
+          )
+          cargo agent upstream-check --format json | tee .tmp/agent/upstream-check.json
+          branch="execute-plan/upstream-sync-${new_sha:0:12}"
+          existing="$(
+            gh pr list \
+              --head "$branch" \
+              --json number,state,url \
+              --limit 1 \
+              --state all
+          )"
+          existing_state="$(jq -r 'first.state // ""' <<<"$existing")"
+          if [[ "$existing_state" == CLOSED ]]; then
+            printf 'compatibility PR for %s is closed; a human must reopen it\n' "$new_sha" >&2
+            exit 3
+          fi
+          main_contains=false
+          if git merge-base --is-ancestor "$new_sha" origin/main; then
+            main_contains=true
+          fi
+          create_pr=true
+          if [[ -n "$existing_state" || "$main_contains" == true ]]; then
+            create_pr=false
+          fi
+          {
+            echo "old_sha=$old_sha"
+            echo "new_sha=$new_sha"
+            echo "branch=$branch"
+            echo "missing_tags=$missing_tags"
+            echo "create_pr=$create_pr"
+            echo "existing=$existing"
+          } >> "$GITHUB_OUTPUT"
+      - name: Prepare provenance-bearing compatibility branch
+        if: ${{ steps.snapshot.outputs.create_pr == 'true' }}
+        env:
+          NEW_SHA: ${{ steps.snapshot.outputs.new_sha }}
+          OLD_SHA: ${{ steps.snapshot.outputs.old_sha }}
+          SYNC_BRANCH: ${{ steps.snapshot.outputs.branch }}
+        run: |
+          base_sha="$(git rev-parse origin/main)"
+          invariant_sha="$(git show "$base_sha:.agents/invariants.yml" | sha256sum | cut -d' ' -f1)"
+          git switch -c "$SYNC_BRANCH" origin/main
+          git merge --no-ff "$NEW_SHA" \
+            -m "chore: synchronize upstream ${NEW_SHA:0:12}" \
+            -m "Upstream-SHA: $NEW_SHA" \
+            -m "Invariant-Manifest-SHA256: $invariant_sha" \
+            -m 'AI-Assisted: yes' \
+            -m 'Signed-off-by: typst-agent-sync[bot] <typst-agent-sync[bot]@users.noreply.github.com>'
+          test "$(sha256sum .agents/invariants.yml | cut -d' ' -f1)" = "$invariant_sha"
+          provenance="review/upstream-sync/$NEW_SHA.json"
+          mkdir -p "$(dirname "$provenance")"
+          tags="$(
+            git for-each-ref \
+              --format='%(refname:strip=3)%09%(objectname)' \
+              refs/remotes/upstream-tags | \
+              jq -Rn \
+                '[inputs | split("\t") | {name: .[0], sha: .[1]}] | sort_by(.name)'
+          )"
+          jq -n \
+            --arg upstream_sha "$NEW_SHA" \
+            --argjson tags "$tags" \
+            '{
+              contract_version: "agent-contract/v1",
+              kind: "UpstreamProvenance",
+              payload: {
+                upstream_url: "https://github.com/typst/typst.git",
+                upstream_sha: $upstream_sha,
+                mirror_sha: $upstream_sha,
+                tags: $tags,
+                push_url_inert: true,
+                status: "identical"
+              }
+            }' > "$provenance"
+          git add "$provenance"
+          git diff --cached --check
+          git diff --cached
+          git commit -s -m "chore: record upstream ${NEW_SHA:0:12} provenance"
+          cargo agent doctor --format json
+          cargo agent policy-check --format json
+          jq -n \
+            --arg base_sha "$base_sha" \
+            --arg compatibility_head "$(git rev-parse HEAD)" \
+            --arg invariant_sha256 "$invariant_sha" \
+            --arg old_mirror_sha "$OLD_SHA" \
+            --arg upstream_sha "$NEW_SHA" \
+            --arg workflow_run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            '{base_sha: $base_sha, compatibility_head: $compatibility_head, invariant_sha256: $invariant_sha256, old_mirror_sha: $old_mirror_sha, upstream_sha: $upstream_sha, workflow_run: $workflow_run}' \
+            > .tmp/agent/sync-provenance.json
+      - name: Preflight and update downstream mirror refs
+        env:
+          NEW_SHA: ${{ steps.snapshot.outputs.new_sha }}
+          OLD_SHA: ${{ steps.snapshot.outputs.old_sha }}
+        run: |
+          remote_mirror="$(
+            git ls-remote --heads origin refs/heads/mirror/upstream-main | \
+              awk 'NR == 1 { print $1 }'
+          )"
+          test "$remote_mirror" = "$OLD_SHA"
+          git ls-remote --tags origin > .tmp/agent/origin-tags.txt
+          missing=()
+          while IFS=$'\t' read -r tag_sha tag; do
+            remote_sha="$(
+              awk -v ref="refs/tags/$tag" '$2 == ref { print $1 }' \
+                .tmp/agent/origin-tags.txt
+            )"
+            if [[ -z "$remote_sha" ]]; then
+              missing+=("refs/tags/$tag:refs/tags/$tag")
+            elif [[ "$remote_sha" != "$tag_sha" ]]; then
+              printf 'origin tag mismatch for %s: origin=%s upstream=%s\n' \
+                "$tag" "$remote_sha" "$tag_sha" >&2
+              exit 3
+            fi
+          done < <(
+            git for-each-ref \
+              --format='%(objectname)%09%(refname:strip=3)' \
+              refs/remotes/upstream-tags
+          )
+          if [[ "$OLD_SHA" != "$NEW_SHA" ]]; then
+            git push origin "$NEW_SHA:refs/heads/mirror/upstream-main" \
+              --force-with-lease="refs/heads/mirror/upstream-main:$OLD_SHA"
+          fi
+          if [[ "${#missing[@]}" -gt 0 ]]; then
+            git push origin "${missing[@]}"
+          fi
+          test "$(git ls-remote --heads origin refs/heads/mirror/upstream-main | awk 'NR == 1 { print $1 }')" = "$NEW_SHA"
+          while IFS=$'\t' read -r tag_sha tag; do
+            test "$(git ls-remote --tags origin "refs/tags/$tag" | awk 'NR == 1 { print $1 }')" = "$tag_sha"
+          done < <(
+            git for-each-ref \
+              --format='%(objectname)%09%(refname:strip=3)' \
+              refs/remotes/upstream-tags
+          )
+      - name: Push compatibility branch without rewrite
+        if: ${{ steps.snapshot.outputs.create_pr == 'true' }}
+        env:
+          SYNC_BRANCH: ${{ steps.snapshot.outputs.branch }}
+        run: |
+          test -z "$(git ls-remote --heads origin "refs/heads/$SYNC_BRANCH")"
+          git push origin "HEAD:refs/heads/$SYNC_BRANCH"
+          test "$(git ls-remote --heads origin "refs/heads/$SYNC_BRANCH" | awk 'NR == 1 { print $1 }')" = "$(git rev-parse HEAD)"
+      - name: Open one review-only compatibility PR
+        if: ${{ steps.snapshot.outputs.create_pr == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          NEW_SHA: ${{ steps.snapshot.outputs.new_sha }}
+          SYNC_BRANCH: ${{ steps.snapshot.outputs.branch }}
+        run: |
+          base_sha="$(git rev-parse origin/main)"
+          owned_paths="$(git diff --name-only "$base_sha...HEAD" | jq -Rsc "split(\"\\n\") | map(select(length > 0))")"
+          task_contract="$(
+            jq -n \
+              --arg upstream_sha "$NEW_SHA" \
+              --argjson owned_paths "$owned_paths" \
+              "{
+                contract_version: \"agent-contract/v1\",
+                kind: \"TaskContract\",
+                payload: {
+                  task_id: (\"upstream-sync-\" + \$upstream_sha[0:12]),
+                  objective: \"Review downstream compatibility with the fetched immutable upstream snapshot.\",
+                  owned_paths: \$owned_paths,
+                  excluded_paths: [\"typst/typst\"],
+                  invariant_ids: [\"release-human-gate\", \"release-provenance\"],
+                  upstream_anchor: \"fetched-upstream-main\",
+                  upstream_sha: \$upstream_sha,
+                  required_checks: [\"Upstream compatibility\", \"Policy and agent PR lane\", \"Tests\"],
+                  human_approval_required: true
+                }
+              }"
+          )"
+          jq -n \
+            --arg task_contract "$task_contract" \
+            --arg upstream_sha "$NEW_SHA" \
+            --arg workflow_run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            "{task_contract: (\$task_contract | fromjson), upstream_sha: \$upstream_sha, workflow_run: \$workflow_run}" \
+            > .tmp/agent/pr-body-data.json
+          {
+            printf "Automated, review-only upstream compatibility proposal.\n\n"
+            printf "## TaskContract\n\n\`\`\`json\n"
+            jq '.task_contract' .tmp/agent/pr-body-data.json
+            printf "\n\`\`\`\n\n"
+            printf "Provenance: \`review/upstream-sync/%s.json\`\n\n" "$NEW_SHA"
+            printf "Full verification, review pack, invariant drift, and exact-head human environment approval are enforced by the \`Upstream compatibility\` check.\n\n"
+            printf "Preparation run: %s\n\n" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            printf "AI disclosure: the sync App generated this branch and PR. It never auto-merges and has no credential or remote capable of writing to \`typst/typst\`.\n"
+          } > .tmp/agent/pr-body.md
+          gh pr create \
+            --base main \
+            --body-file .tmp/agent/pr-body.md \
+            --head "$SYNC_BRANCH" \
+            --reviewer rixzkiye \
+            --title "chore: sync upstream ${NEW_SHA:0:12}"
+      - name: Report existing compatibility PR
+        if: ${{ steps.snapshot.outputs.create_pr != 'true' }}
+        env:
+          EXISTING: ${{ steps.snapshot.outputs.existing }}
+        run: |
+          if [[ "$EXISTING" != '[]' ]]; then
+            jq . <<<"$EXISTING"
+          else
+            echo 'origin/main already contains the fetched upstream snapshot'
+          fi
+      - name: Upload deterministic sync evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: upstream-sync-${{ github.run_id }}
+          path: .tmp/agent
+          retention-days: 30
+
+  compatibility:
+    name: Upstream compatibility
+    if: ${{ github.event_name == 'pull_request' && startsWith(github.head_ref, 'execute-plan/upstream-sync-') }}
+    runs-on: ubuntu-latest
+    environment: upstream-sync-human-approval
+    steps:
+      - name: Checkout exact compatibility head
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          components: clippy, rustfmt
+      - name: Install complete verification toolchains
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal
+          rustup toolchain install nightly-2025-10-28 --profile minimal --component miri
+          cargo install --locked cargo-fuzz@0.12.0
+      - name: Fetch immutable mirror and upstream snapshots
+        run: |
+          git remote get-url upstream >/dev/null 2>&1 || \
+            git remote add upstream https://github.com/typst/typst.git
+          git remote set-url upstream https://github.com/typst/typst.git
+          git remote set-url --push upstream https://invalid.example/typst/typst.git
+          git fetch --no-tags origin \
+            refs/heads/mirror/upstream-main:refs/heads/mirror/upstream-main
+          git fetch --tags origin
+          mkdir -p .tmp/agent
+          scripts/upstream-sync.sh | tee .tmp/agent/upstream-sync.txt
+          cargo agent upstream-check --format json | tee .tmp/agent/upstream-check.json
+      - name: Materialize exact-head human approval for reference changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          paths="$(
+            git diff --name-only --diff-filter=ACDMRTUXB "$base...HEAD" | \
+              awk '/^tests\/ref\// || /\.snap$/ || /\.hash$/ { print }'
+          )"
+          paths_json="$(jq -Rn --arg paths "$paths" '$paths | split("\n") | map(select(length > 0))')"
+          if [[ "$paths_json" == '[]' ]]; then
+            exit 0
+          fi
+          test -s review/reference-visual.md
+          test -s review/reference-invariant-impact.md
+          git ls-files --error-unmatch -- \
+            review/reference-visual.md review/reference-invariant-impact.md
+          approvals="$(
+            curl --fail-with-body --silent --show-error \
+              --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals"
+          )"
+          reviewer="$(
+            jq -er '
+              [
+                .[]
+                | select(
+                    .state == "approved"
+                    and any(
+                      .environments[];
+                      .name == "upstream-sync-human-approval"
+                    )
+                  )
+              ]
+              | last
+              | .user.login
+            ' <<<"$approvals"
+          )"
+          approval="$(git rev-parse --git-path typst-agent/reference-approval.json)"
+          mkdir -p "$(dirname "$approval")"
+          jq -n \
+            --arg head_sha "$(git rev-parse HEAD)" \
+            --arg reviewer "$reviewer" \
+            --argjson reference_paths "$paths_json" \
+            --arg visual_report review/reference-visual.md \
+            --arg invariant_impact review/reference-invariant-impact.md \
+            '{head_sha: $head_sha, reviewer: $reviewer, reference_paths: $reference_paths, visual_report: $visual_report, invariant_impact: $invariant_impact}' \
+            > "$approval"
+      - name: Verify invariant drift and the complete compatibility surface
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          base_invariants="$(git show "$base:.agents/invariants.yml" | sha256sum | cut -d' ' -f1)"
+          head_invariants="$(sha256sum .agents/invariants.yml | cut -d' ' -f1)"
+          if [[ "$base_invariants" != "$head_invariants" ]]; then
+            test -s review/upstream-invariant-impact.md
+            git ls-files --error-unmatch -- review/upstream-invariant-impact.md
+          fi
+          cargo agent policy-check --format json | tee .tmp/agent/policy-check.json
+          cargo agent verify --tier full --base "$base" --format json | tee .tmp/agent/full-verify.json
+          cargo agent review-pack --base "$base" --format json | tee .tmp/agent/review-pack-output.json
+      - name: Upload compatibility evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: upstream-compatibility-${{ github.event.pull_request.head.sha }}
+          path: .tmp/agent
+          retention-days: 30

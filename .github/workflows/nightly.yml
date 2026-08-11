@@ -21,6 +21,8 @@ jobs:
         run: |
           git remote add upstream https://github.com/typst/typst.git
           git remote set-url --push upstream https://invalid.example/typst/typst.git
+          git fetch --no-tags origin \
+            refs/heads/mirror/upstream-main:refs/heads/mirror/upstream-main
       - name: Dependency security audit
         run: |
           cargo install --locked cargo-audit@0.21.2
@@ -32,7 +34,8 @@ jobs:
           git diff --exit-code
       - name: Upstream sync dry-run
         run: |
-          git fetch --tags upstream main
+          mkdir -p .tmp/agent
+          scripts/upstream-sync.sh | tee .tmp/agent/upstream-sync.txt
           cargo agent upstream-check --format json
 
   fuzz-rotation:

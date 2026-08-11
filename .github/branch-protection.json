@@ -3,7 +3,6 @@
     "strict": true,
     "contexts": [
       "Policy and agent PR lane",
-      "Reference evidence",
       "DCO sign-off"
     ]
   },

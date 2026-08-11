@@ -18,6 +18,23 @@ tests/evidence, invariant impact, and an AI disclosure when applicable. At least
 one CODEOWNER human approval is required; approvals are dismissed when new
 commits arrive. Merge and release are never performed by automation.
 
+### Single-owner bootstrap
+
+PR #1 through #7 use a temporary environment approval because the repository
+has one human owner and a pull-request author cannot supply an independent
+native review. The `merge-single-owner` environment is restricted to the
+maintainer team and, for these seven PRs only, permits self-review. Its required
+`Human owner approval` check is bound to the exact pull-request head SHA and
+revalidates the open PR, its `main` base, and every other required check after
+the environment approval. A new commit therefore requires a new workflow run
+and a new approval.
+
+After PR #7 lands, branch protection switches to one native CODEOWNER approval
+with stale-review dismissal and conversation resolution. The bootstrap check is
+removed from protection, and the workflow is deleted by the first bot-authored
+release PR. The environment remains disabled as an audit record and cannot be
+used for later pull requests.
+
 ## Contributions
 
 Contributors sign off each commit under the Developer Certificate of Origin

@@ -1,0 +1,97 @@
+name: Human owner approval
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  checks: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: human-owner-approval-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: true
+
+jobs:
+  owner-approval:
+    name: Human owner approval
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    environment: merge-single-owner
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+    steps:
+      - name: Revalidate exact head and required checks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "$PR_NUMBER" in
+            1|2|3|4|5|6|7) ;;
+            *)
+              echo "The bootstrap owner gate is restricted to PR #1-#7." >&2
+              exit 1
+              ;;
+          esac
+
+          if [[ "$TRIGGERING_ACTOR" != "rixzkiye" ]]; then
+            echo "The bootstrap run was not triggered by a repository maintainer." >&2
+            exit 1
+          fi
+
+          current_pr="$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER")"
+          current_head="$(jq -r '.head.sha' <<<"$current_pr")"
+          current_base="$(jq -r '.base.ref' <<<"$current_pr")"
+          current_state="$(jq -r '.state' <<<"$current_pr")"
+
+          if [[ "$current_state" != "open" || "$current_base" != "main" ]]; then
+            echo "The approved pull request must still be open and target main." >&2
+            exit 1
+          fi
+          if [[ "$current_head" != "$EXPECTED_HEAD_SHA" ]]; then
+            echo "The pull request head changed after this approval run started." >&2
+            exit 1
+          fi
+
+          required_contexts="$(
+            gh api "repos/$REPOSITORY/branches/main/protection/required_status_checks" \
+              --jq '.contexts[]' | grep -Fvx 'Human owner approval' || true
+          )"
+          check_runs="$(
+            gh api --paginate \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/$REPOSITORY/commits/$EXPECTED_HEAD_SHA/check-runs?per_page=100" \
+              --slurp | jq '{check_runs: map(.check_runs[]) }'
+          )"
+          commit_status="$(gh api "repos/$REPOSITORY/commits/$EXPECTED_HEAD_SHA/status")"
+
+          failed=0
+          while IFS= read -r context; do
+            [[ -n "$context" ]] || continue
+            check_conclusion="$(
+              jq -r --arg context "$context" \
+                '[.check_runs[] | select(.name == $context)] | max_by(.id) | .conclusion // empty' \
+                <<<"$check_runs"
+            )"
+            status_state="$(
+              jq -r --arg context "$context" \
+                '[.statuses[] | select(.context == $context)] | max_by(.id) | .state // empty' \
+                <<<"$commit_status"
+            )"
+            if [[ "$check_conclusion" != "success" && "$status_state" != "success" ]]; then
+              echo "Required check is not green at $EXPECTED_HEAD_SHA: $context" >&2
+              failed=1
+            fi
+          done <<<"$required_contexts"
+
+          if [[ "$failed" -ne 0 ]]; then
+            exit 1
+          fi
+
+          printf 'approved_pr=%s\napproved_head_sha=%s\n' "$PR_NUMBER" "$EXPECTED_HEAD_SHA"

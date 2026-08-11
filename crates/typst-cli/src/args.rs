@@ -25,7 +25,7 @@ const ENV_PATH_SEP: char = if cfg!(windows) { ';' } else { ':' };
 /// The overall structure of the help.
 #[rustfmt::skip]
 const HELP_TEMPLATE: &str = "\
-Typst {version}
+Typst Agent {version}
 
 {usage-heading} {usage}
 
@@ -39,7 +39,7 @@ const AFTER_HELP: &str = color_print::cstr!("\
   <s>Tutorial:</>                 https://typst.app/docs/tutorial/
   <s>Reference documentation:</>  https://typst.app/docs/reference/
   <s>Templates & Packages:</>     https://typst.app/universe/
-  <s>Forum for questions:</>      https://forum.typst.app/
+  <s>Downstream discussions:</>  https://github.com/anartha-corp/typst-agent/discussions
 ");
 
 const STYLES: Styles = Styles::styled()
@@ -49,12 +49,8 @@ const STYLES: Styles = Styles::styled()
 /// The Typst compiler.
 #[derive(Debug, Clone, Parser)]
 #[clap(
-    name = "typst",
-    version = format!(
-        "{} ({})",
-        typst_utils::version().raw(),
-        typst_utils::display_commit(typst_utils::version().commit()),
-    ),
+    name = "typst-agent",
+    version = crate::identity::version(),
     author,
     help_template = HELP_TEMPLATE,
     after_help = AFTER_HELP,
@@ -100,7 +96,7 @@ pub enum Command {
     /// Lists all discovered fonts in system and custom font paths.
     Fonts(FontsCommand),
 
-    /// Self update the Typst CLI.
+    /// Self-update the Typst Agent CLI.
     #[cfg_attr(not(feature = "self-update"), clap(hide = true))]
     Update(UpdateCommand),
 
@@ -249,7 +245,7 @@ pub struct UpdateCommand {
     pub force: bool,
 
     /// Reverts to the version from before the last update (only possible if
-    /// `typst update` has previously ran).
+    /// `typst-agent update` has previously ran).
     #[clap(
         long,
         default_value_t = false,

@@ -8,8 +8,8 @@ version = "0.15.1"
 rust-version = "1.92" # also change in ci.yml
 authors = ["The Typst Project Developers"]
 edition = "2024"
-homepage = "https://typst.app"
-repository = "https://github.com/typst/typst"
+homepage = "https://github.com/anartha-corp/typst-agent"
+repository = "https://github.com/anartha-corp/typst-agent"
 license = "Apache-2.0"
 categories = ["compilers"]
 keywords = ["typst"]
@@ -18,7 +18,7 @@ readme = "README.md"
 [workspace.dependencies]
 typst = { path = "crates/typst", version = "0.15.1" }
 typst-bundle = { path = "crates/typst-bundle", version = "0.15.1" }
-typst-cli = { path = "crates/typst-cli", version = "0.15.1" }
+typst-cli = { path = "crates/typst-cli", version = "0.15.1-agent.0" }
 typst-eval = { path = "crates/typst-eval", version = "0.15.1" }
 typst-html = { path = "crates/typst-html", version = "0.15.1" }
 typst-ide = { path = "crates/typst-ide", version = "0.15.1" }

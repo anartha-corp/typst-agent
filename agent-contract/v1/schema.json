@@ -333,16 +333,27 @@
         "size": { "type": "integer", "minimum": 1 }
       }
     },
+    "ReleaseFileEvidence": {
+      "type": "object",
+      "required": ["name", "sha256", "size"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/NonEmptyString" },
+        "sha256": { "$ref": "#/$defs/Sha256" },
+        "size": { "type": "integer", "minimum": 1 }
+      }
+    },
     "ReleaseManifest": {
       "type": "object",
       "required": [
         "product",
+        "downstream_version",
         "upstream_version",
         "release_tag",
         "upstream_sha",
         "downstream_sha",
         "artifacts",
-        "sbom_sha256",
+        "sbom",
         "sigstore_bundles",
         "provenance_attestations",
         "reproducibility",
@@ -351,6 +362,7 @@
       "additionalProperties": false,
       "properties": {
         "product": { "const": "typst-agent" },
+        "downstream_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+-agent\\.[0-9]+$" },
         "upstream_version": { "$ref": "#/$defs/NonEmptyString" },
         "release_tag": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+-agent\\.[0-9]+$" },
         "upstream_sha": { "$ref": "#/$defs/GitSha" },
@@ -360,9 +372,17 @@
           "minItems": 1,
           "items": { "$ref": "#/$defs/ReleaseArtifact" }
         },
-        "sbom_sha256": { "$ref": "#/$defs/Sha256" },
-        "sigstore_bundles": { "$ref": "#/$defs/NonEmptyStringArray" },
-        "provenance_attestations": { "$ref": "#/$defs/NonEmptyStringArray" },
+        "sbom": { "$ref": "#/$defs/ReleaseFileEvidence" },
+        "sigstore_bundles": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/ReleaseFileEvidence" }
+        },
+        "provenance_attestations": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/ReleaseFileEvidence" }
+        },
         "reproducibility": {
           "type": "array",
           "minItems": 1,
@@ -378,7 +398,21 @@
             }
           }
         },
-        "smoke_results": { "$ref": "#/$defs/NonEmptyStringArray" }
+        "smoke_results": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["subject", "platform", "evidence", "passed"],
+            "additionalProperties": false,
+            "properties": {
+              "subject": { "$ref": "#/$defs/NonEmptyString" },
+              "platform": { "$ref": "#/$defs/NonEmptyString" },
+              "evidence": { "$ref": "#/$defs/ReleaseFileEvidence" },
+              "passed": { "const": true }
+            }
+          }
+        }
       }
     }
   }

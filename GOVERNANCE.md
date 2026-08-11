@@ -16,7 +16,8 @@ the final human approval for a merge or release.
 Changes should be proposed as focused pull requests. A PR must include scope,
 tests/evidence, invariant impact, and an AI disclosure when applicable. At least
 one CODEOWNER human approval is required; approvals are dismissed when new
-commits arrive. Merge and release are never performed by automation.
+commits arrive. Automation may perform the mechanical merge or publication only
+after the applicable human approval; automation never supplies that approval.
 
 ### Single-owner bootstrap
 

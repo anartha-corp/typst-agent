@@ -3216,7 +3216,7 @@ dependencies = [
 
 [[package]]
 name = "typst-cli"
-version = "0.15.1"
+version = "0.15.1-agent.0"
 dependencies = [
  "chrono",
  "clap",

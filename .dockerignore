@@ -1,0 +1,7 @@
+.git
+.tmp
+target
+.env
+.env.*
+*.key
+*.pem

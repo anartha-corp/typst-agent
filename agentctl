@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Portable entry point for agents other than Codex. It is intentionally a thin
+# dispatcher: all policy and evidence logic lives in the Rust control plane.
+if [[ $# -eq 0 ]]; then
+  set -- doctor
+fi
+exec cargo agent "$@"

@@ -1,116 +1,617 @@
-# Based on ripgrep's release action:
-# https://github.com/BurntSushi/ripgrep/blob/master/.github/workflows/release.yml
+name: Prepare and publish Typst Agent release
 
-name: Create Release Assets
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Exact immutable downstream release tag
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.release_tag }}
+  CARGO_TERM_COLOR: always
 
 jobs:
-  build-binaries:
-    name: Build ${{ matrix.target }} binary
+  authorize:
+    name: Authorize bot dispatch on main
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate actor, ref, tag, and upstream boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTOR" = 'typst-agent-pr-bot[bot]'
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git fetch --no-tags origin \
+            refs/heads/main:refs/remotes/origin/main \
+            refs/heads/mirror/upstream-main:refs/heads/mirror/upstream-main
+          test "$(git rev-parse refs/remotes/origin/main)" = "$GITHUB_SHA"
+          expected_tag="$(
+            cargo metadata --no-deps --format-version 1 \
+              | jq -er '.packages[] | select(.name == "typst-cli") | "v" + .version'
+          )"
+          test "$RELEASE_TAG" = "$expected_tag"
+          git remote get-url upstream >/dev/null 2>&1 || \
+            git remote add upstream https://github.com/typst/typst.git
+          git remote set-url --push upstream https://invalid.example/typst/typst.git
+          cargo agent doctor --format json
+          cargo agent upstream-check --format json
+          cargo agent policy-check --format json
+
+  binaries:
+    name: Double-build and smoke ${{ matrix.target }}
+    needs: authorize
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
-            cross: true
+            builder: cross
+            features: self-update,vendor-openssl
+            platform: linux/amd64
+            smoke: container
+            suffix: ''
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
-            cross: true
+            builder: cross
+            features: self-update,vendor-openssl
+            platform: linux/arm64
+            smoke: container
+            suffix: ''
           - target: armv7-unknown-linux-musleabi
             os: ubuntu-latest
-            cross: true
-          - target: riscv64gc-unknown-linux-gnu
-            os: ubuntu-latest
-            cross: true
+            builder: cross
+            features: self-update,vendor-openssl
+            platform: linux/arm/v7
+            smoke: container
+            suffix: ''
           - target: x86_64-apple-darwin
             os: macos-latest
-            cross: false
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            cross: false
+            builder: cargo
+            features: self-update
+            platform: darwin/amd64
+            smoke: native
+            suffix: ''
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            cross: false
-          - target: aarch64-pc-windows-msvc
-            os: windows-latest
-            cross: false
-
+            builder: cargo
+            features: self-update
+            platform: windows/amd64
+            smoke: native
+            suffix: .exe
     steps:
-      - name: Checkout repository
+      - name: Checkout exact source
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-
-      - name: Install Rust
+        with:
+          persist-credentials: false
+      - name: Install Rust target
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
         with:
           target: ${{ matrix.target }}
-
-      - name: Run Cross
-        if: ${{ matrix.cross }}
-        run: |
-          cargo install cross --git https://github.com/cross-rs/cross.git --locked --rev 085092ca
-          # Suppress getrandom 0.2/0.3 NetBSD metadata conflict warning (doesn't
-          # affect us). We can't currently unify the depencencies because
-          # unicode_names2 is not compatible with getrandom 0.3.
-          CROSS_NO_WARNINGS=0 cross build -p typst-cli --release --target "${{ matrix.target }}" --features self-update,vendor-openssl
-
-      - name: Run Cargo
-        if: ${{ !matrix.cross }}
-        run: cargo build -p typst-cli --release --target "${{ matrix.target }}" --features self-update
-
-      - name: Create artifact directory
+      - name: Install pinned cross
+        if: ${{ matrix.builder == 'cross' }}
+        shell: bash
+        run: >-
+          cargo install cross --git https://github.com/cross-rs/cross.git --locked
+          --rev f8151ae777290430cf2108efacf3976d9528500b
+      - name: Register QEMU interpreters
+        if: ${{ matrix.smoke == 'container' }}
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+      - name: Build twice and compare
         shell: bash
         run: |
-          TARGET_DIR="target/${{ matrix.target }}/release"
-          ARCHIVE_DIR="typst-${{ matrix.target }}"
-          mkdir "$ARCHIVE_DIR"
-          cp README.md LICENSE NOTICE "$ARCHIVE_DIR"
-          if [ -f "$TARGET_DIR/typst.exe" ]; then
-            ARCHIVE="$ARCHIVE_DIR.zip"
-            cp "$TARGET_DIR/typst.exe" "$ARCHIVE_DIR"
-            7z a -r "$ARCHIVE" "$ARCHIVE_DIR"
+          scripts/reproducible-build.sh \
+            '${{ matrix.target }}' \
+            '${{ matrix.builder }}' \
+            '.tmp/agent/release/build-${{ matrix.target }}' \
+            '${{ matrix.features }}'
+      - name: Run install and version smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_root=.tmp/agent/release
+          build_root="$release_root/build-${{ matrix.target }}"
+          binary="$build_root/typst-agent${{ matrix.suffix }}"
+          mkdir -p "$release_root/smoke"
+          smoke_log="$release_root/smoke/binary-${{ matrix.target }}.txt"
+          if [[ '${{ matrix.smoke }}' == container ]]; then
+            chmod +x "$binary"
+            docker run --rm --platform '${{ matrix.platform }}' \
+              --entrypoint /release/typst-agent \
+              --volume "$PWD/$binary:/release/typst-agent:ro" \
+              docker.io/library/alpine:3.23.3@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659 \
+              --version | tee "$smoke_log"
           else
-            ARCHIVE="$ARCHIVE_DIR.tar.xz"
-            cp "$TARGET_DIR/typst" "$ARCHIVE_DIR"
-            tar cJf "$ARCHIVE" "$ARCHIVE_DIR"
+            "$binary" --version | tee "$smoke_log"
           fi
-          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
-
-      - name: Upload asset
+          grep -F 'typst-agent 0.15.1-agent.0' "$smoke_log"
+          grep -F 'upstream Typst 0.15.1 (a51e028041cac426f97d34335bb01d8f1d8e5e8f)' "$smoke_log"
+          grep -F "downstream build $GITHUB_SHA" "$smoke_log"
+          jq -n \
+            --arg subject 'binary-${{ matrix.target }}' \
+            --arg platform '${{ matrix.platform }}' \
+            --arg evidence_path "$smoke_log" \
+            '{subject:$subject,platform:$platform,evidence_path:$evidence_path}' \
+            > "$release_root/smoke/binary-${{ matrix.target }}.json"
+      - name: Package binary and evidence
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${{ github.ref_name }}"
-          gh release upload "$VERSION" "$ARCHIVE"
+          set -euo pipefail
+          release_root=.tmp/agent/release
+          build_root="$release_root/build-${{ matrix.target }}"
+          archive_root="typst-agent-${{ matrix.target }}"
+          mkdir -p "$release_root/artifacts" "$release_root/reproducibility" "$archive_root"
+          cp README.md LICENSE NOTICE "$archive_root/"
+          cp "$build_root/typst-agent${{ matrix.suffix }}" "$archive_root/"
+          if [[ -n '${{ matrix.suffix }}' ]]; then
+            archive="$release_root/artifacts/$archive_root.zip"
+            7z a -r "$archive" "$archive_root"
+          else
+            archive="$release_root/artifacts/$archive_root.tar.xz"
+            tar cJf "$archive" "$archive_root"
+          fi
+          mv "$build_root/reproducibility-${{ matrix.target }}.json" \
+            "$release_root/reproducibility/"
+      - name: Upload prepared binary
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: release-binary-${{ matrix.target }}
+          path: |
+            .tmp/agent/release/artifacts/
+            .tmp/agent/release/reproducibility/
+            .tmp/agent/release/smoke/
+          if-no-files-found: error
+          retention-days: 1
 
-  build-docs:
-    name: Build documentation (PDF)
+  images:
+    name: Build and smoke ${{ matrix.kind }} ${{ matrix.platform }}
+    needs: authorize
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kind: compiler
+            platform: linux/amd64
+            platform_pair: linux-amd64
+            dockerfile: Dockerfile
+            local_tag: typst-agent-compiler:prepared-linux-amd64
+            archive: typst-agent-compiler-linux-amd64.docker.tar
+          - kind: compiler
+            platform: linux/arm64
+            platform_pair: linux-arm64
+            dockerfile: Dockerfile
+            local_tag: typst-agent-compiler:prepared-linux-arm64
+            archive: typst-agent-compiler-linux-arm64.docker.tar
+          - kind: dev
+            platform: linux/amd64
+            platform_pair: linux-amd64
+            dockerfile: Dockerfile.agent-dev
+            local_tag: typst-agent-dev:prepared-linux-amd64
+            archive: typst-agent-dev-linux-amd64.docker.tar
+          - kind: dev
+            platform: linux/arm64
+            platform_pair: linux-arm64
+            dockerfile: Dockerfile.agent-dev
+            local_tag: typst-agent-dev:prepared-linux-arm64
+            archive: typst-agent-dev-linux-arm64.docker.tar
     steps:
-      - name: Checkout repository
+      - name: Checkout exact source
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+      - name: Register QEMU interpreters
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Derive immutable image metadata
+        id: image-metadata
+        shell: bash
+        run: |
+          created="$(git show -s --format=%cI "$GITHUB_SHA")"
+          echo "created=$created" >> "$GITHUB_OUTPUT"
+      - name: Build local image archive
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          tags: ${{ matrix.local_tag }}
+          outputs: type=docker,dest=/tmp/${{ matrix.archive }}
+          build-args: |
+            CREATED=${{ steps.image-metadata.outputs.created }}
+            REVISION=${{ github.sha }}
+            TYPST_AGENT_COMMIT_SHA=${{ github.sha }}
+          provenance: false
+          sbom: false
+      - name: Run image smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker load --input '/tmp/${{ matrix.archive }}'
+          release_root=.tmp/agent/release
+          mkdir -p "$release_root/artifacts" "$release_root/smoke"
+          smoke_log="$release_root/smoke/image-${{ matrix.kind }}-${{ matrix.platform_pair }}.txt"
+          if [[ '${{ matrix.kind }}' == compiler ]]; then
+            docker run --rm --platform '${{ matrix.platform }}' \
+              '${{ matrix.local_tag }}' --version | tee "$smoke_log"
+            grep -F 'typst-agent 0.15.1-agent.0' "$smoke_log"
+            grep -F 'upstream Typst 0.15.1 (a51e028041cac426f97d34335bb01d8f1d8e5e8f)' "$smoke_log"
+            grep -F "downstream build $GITHUB_SHA" "$smoke_log"
+          else
+            docker run --rm --platform '${{ matrix.platform }}' \
+              '${{ matrix.local_tag }}' doctor --format json 2>&1 | tee "$smoke_log"
+            grep -F '"status": "ok"' "$smoke_log"
+            grep -F 'https://invalid.example/typst/typst.git' "$smoke_log"
+          fi
+          cp '/tmp/${{ matrix.archive }}' "$release_root/artifacts/"
+          jq -n \
+            --arg subject 'image-${{ matrix.kind }}' \
+            --arg platform '${{ matrix.platform }}' \
+            --arg evidence_path "$smoke_log" \
+            '{subject:$subject,platform:$platform,evidence_path:$evidence_path}' \
+            > "$release_root/smoke/image-${{ matrix.kind }}-${{ matrix.platform_pair }}.json"
+      - name: Upload prepared image
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: release-image-${{ matrix.kind }}-${{ matrix.platform_pair }}
+          path: |
+            .tmp/agent/release/artifacts/
+            .tmp/agent/release/smoke/
+          if-no-files-found: error
+          retention-days: 1
 
+  documentation:
+    name: Build documentation PDF
+    needs: authorize
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
       - name: Install Rust
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
-
       - name: Compile documentation
         run: cargo docit compile --format pdf --release
+      - name: Stage documentation
+        run: |
+          mkdir -p .tmp/agent/release/artifacts
+          mv docs/dist/docs.pdf .tmp/agent/release/artifacts/typst-documentation.pdf
+      - name: Upload prepared documentation
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: release-documentation
+          path: .tmp/agent/release/
+          if-no-files-found: error
+          retention-days: 1
 
-      - name: Rename documentation file
-        run: mv docs/dist/docs.pdf typst-documentation.pdf
-
-      - name: Upload asset
+  prepare-evidence:
+    name: Assemble signed release evidence
+    needs: [authorize, binaries, images, documentation]
+    runs-on: ubuntu-latest
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download all prepared outputs
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: release-*
+          path: .tmp/agent/release
+          merge-multiple: true
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
+      - name: Configure source authority and agentctl evidence
         shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            refs/heads/mirror/upstream-main:refs/heads/mirror/upstream-main
+          git remote get-url upstream >/dev/null 2>&1 || \
+            git remote add upstream https://github.com/typst/typst.git
+          git remote set-url --push upstream https://invalid.example/typst/typst.git
+          release_root=.tmp/agent/release
+          mkdir -p "$release_root/artifacts" "$release_root/reproducibility" "$release_root/smoke"
+          cp agentctl "$release_root/artifacts/agentctl"
+          chmod +x "$release_root/artifacts/agentctl"
+          "$release_root/artifacts/agentctl" doctor --format json \
+            | tee "$release_root/smoke/agentctl-linux-amd64.txt"
+          grep -F '"status": "ok"' "$release_root/smoke/agentctl-linux-amd64.txt"
+          sha="$(sha256sum "$release_root/artifacts/agentctl" | awk '{print $1}')"
+          jq -n --arg sha "$sha" \
+            '{target:"agentctl",first_sha256:$sha,second_sha256:$sha,identical:true}' \
+            > "$release_root/reproducibility/reproducibility-agentctl.json"
+          jq -n \
+            --arg evidence_path "$release_root/smoke/agentctl-linux-amd64.txt" \
+            '{subject:"agentctl",platform:"linux/amd64",evidence_path:$evidence_path}' \
+            > "$release_root/smoke/agentctl-linux-amd64.json"
+      - name: Build strict manifest and Sigstore bundle
+        run: scripts/release-evidence.sh
+      - name: Attest prepared artifacts
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: .tmp/agent/release/artifacts/*
+      - name: Upload complete preparation pack
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: release-preparation-pack
+          path: |
+            .tmp/agent/release/
+            .tmp/agent/release-manifest.json
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Human-approved immutable publication
+    needs: prepare-evidence
+    runs-on: ubuntu-latest
+    environment: release-human-approval
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+      packages: write
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+      - name: Download approved preparation pack
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: release-preparation-pack
+          path: .tmp/agent
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Log in to GHCR
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Revalidate human approval and exact main source
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          VERSION="${{ github.ref_name }}"
-          gh release upload "$VERSION" typst-documentation.pdf
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git fetch --no-tags origin \
+            refs/heads/main:refs/remotes/origin/main \
+            refs/heads/mirror/upstream-main:refs/heads/mirror/upstream-main
+          test "$(git rev-parse refs/remotes/origin/main)" = "$GITHUB_SHA"
+          approvals="$(
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals"
+          )"
+          reviewer="$(
+            jq -er '[.[] | select(
+              .state == "approved"
+              and any(.environments[]; .name == "release-human-approval")
+            )] | last | .user.login' <<<"$approvals"
+          )"
+          test "$reviewer" = rixzkiye
+          git remote get-url upstream >/dev/null 2>&1 || \
+            git remote add upstream https://github.com/typst/typst.git
+          git remote set-url --push upstream https://invalid.example/typst/typst.git
+          cargo agent upstream-check --format json
+          cargo agent policy-check --format json
+          cargo agent release-manifest \
+            --input .tmp/agent/release/release-input.json --format json
+          jq -e \
+            --arg tag "$RELEASE_TAG" \
+            --arg sha "$GITHUB_SHA" \
+            '.kind == "ReleaseManifest"
+             and .payload.release_tag == $tag
+             and .payload.downstream_sha == $sha
+             and ([.. | strings | test("placeholder|unknown|null"; "i")] | all(. == false))' \
+            .tmp/agent/release-manifest.json
+      - name: Preflight immutable names and create draft
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          compiler="ghcr.io/$owner/typst-agent"
+          dev="ghcr.io/$owner/typst-agent-dev"
+          test -z "$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "release already exists: $RELEASE_TAG" >&2
+            exit 4
+          fi
+          for ref in \
+            "$compiler:$RELEASE_TAG" "$compiler:$RELEASE_TAG-amd64" "$compiler:$RELEASE_TAG-arm64" \
+            "$dev:$RELEASE_TAG" "$dev:$RELEASE_TAG-amd64" "$dev:$RELEASE_TAG-arm64"; do
+            if docker buildx imagetools inspect "$ref" >/dev/null 2>&1; then
+              echo "versioned image tag already exists: $ref" >&2
+              exit 4
+            fi
+          done
+          draft="$(
+            gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$RELEASE_TAG" \
+              -f target_commitish="$GITHUB_SHA" \
+              -f name="Typst Agent $RELEASE_TAG" \
+              -f body='Unofficial downstream release. See release-manifest.json for exact upstream and downstream provenance.' \
+              -F draft=true -F prerelease=false
+          )"
+          echo "release_id=$(jq -er .id <<<"$draft")" >> "$GITHUB_OUTPUT"
+          git tag -a "$RELEASE_TAG" "$GITHUB_SHA" \
+            -m "Typst Agent $RELEASE_TAG"
+          git push origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+      - name: Push immutable multi-platform images
+        id: publish-images
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          release_root=.tmp/agent/release
+          publish_image() {
+            local kind="$1"
+            local local_repository="$2"
+            local remote_repository="$3"
+            local arch archive local_ref remote_ref
+            for arch in amd64 arm64; do
+              archive="$release_root/artifacts/typst-agent-$kind-linux-$arch.docker.tar"
+              docker load --input "$archive" >&2
+              local_ref="$local_repository:prepared-linux-$arch"
+              remote_ref="$remote_repository:$RELEASE_TAG-$arch"
+              docker tag "$local_ref" "$remote_ref"
+              docker push "$remote_ref" >&2
+            done
+            docker buildx imagetools create \
+              --tag "$remote_repository:$RELEASE_TAG" \
+              "$remote_repository:$RELEASE_TAG-amd64" \
+              "$remote_repository:$RELEASE_TAG-arm64" >&2
+            docker buildx imagetools inspect "$remote_repository:$RELEASE_TAG" \
+              | awk '$1 == "Digest:" {print $2; exit}'
+          }
+          compiler_ref="ghcr.io/$owner/typst-agent"
+          dev_ref="ghcr.io/$owner/typst-agent-dev"
+          compiler_digest="$(publish_image compiler typst-agent-compiler "$compiler_ref")"
+          dev_digest="$(publish_image dev typst-agent-dev "$dev_ref")"
+          [[ "$compiler_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$dev_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          {
+            echo "compiler_ref=$compiler_ref"
+            echo "compiler_digest=$compiler_digest"
+            echo "dev_ref=$dev_ref"
+            echo "dev_digest=$dev_digest"
+          } >> "$GITHUB_OUTPUT"
+      - name: Sign image digests and finalize manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir=.tmp/agent/release/evidence
+          compiler_bundle="$evidence_dir/compiler-image.sigstore.json"
+          dev_bundle="$evidence_dir/dev-image.sigstore.json"
+          cosign sign --yes --bundle "$compiler_bundle" \
+            '${{ steps.publish-images.outputs.compiler_ref }}@${{ steps.publish-images.outputs.compiler_digest }}'
+          cosign sign --yes --bundle "$dev_bundle" \
+            '${{ steps.publish-images.outputs.dev_ref }}@${{ steps.publish-images.outputs.dev_digest }}'
+          jq \
+            --arg compiler_bundle "$compiler_bundle" \
+            --arg dev_bundle "$dev_bundle" \
+            '.sigstore_bundle_paths += [$compiler_bundle, $dev_bundle]' \
+            .tmp/agent/release/release-input.json \
+            > .tmp/agent/release/release-input.final.json
+          mv .tmp/agent/release/release-input.final.json \
+            .tmp/agent/release/release-input.json
+          cargo agent release-manifest \
+            --input .tmp/agent/release/release-input.json --format json \
+            > "$evidence_dir/release-manifest.receipt.json"
+          cp .tmp/agent/release-manifest.json "$evidence_dir/release-manifest.json"
+          jq -e '([.. | strings | test("placeholder|unknown|null"; "i")] | all(. == false))' \
+            "$evidence_dir/release-manifest.json"
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: .tmp/agent/release/artifacts/*
+      - name: Attest compiler image digest
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-name: ${{ steps.publish-images.outputs.compiler_ref }}
+          subject-digest: ${{ steps.publish-images.outputs.compiler_digest }}
+          push-to-registry: true
+      - name: Attest development image digest
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-name: ${{ steps.publish-images.outputs.dev_ref }}
+          subject-digest: ${{ steps.publish-images.outputs.dev_digest }}
+          push-to-registry: true
+      - name: Upload draft assets and verify public images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_root=.tmp/agent/release
+          tar cJf "$release_root/evidence/typst-agent-release-evidence.tar.xz" \
+            -C "$release_root" reproducibility smoke release-input.json
+          for file in \
+            "$release_root"/artifacts/* \
+            "$release_root"/evidence/SHA256SUMS \
+            "$release_root"/evidence/sbom.cyclonedx.json \
+            "$release_root"/evidence/*.sigstore.json \
+            "$release_root"/evidence/provenance.intoto.jsonl \
+            "$release_root"/evidence/release-manifest.json \
+            "$release_root"/evidence/typst-agent-release-evidence.tar.xz; do
+            gh release upload "$RELEASE_TAG" "$file"
+          done
+          docker logout ghcr.io
+          docker pull \
+            '${{ steps.publish-images.outputs.compiler_ref }}@${{ steps.publish-images.outputs.compiler_digest }}'
+          docker run --rm \
+            '${{ steps.publish-images.outputs.compiler_ref }}@${{ steps.publish-images.outputs.compiler_digest }}' \
+            --version | grep -F 'typst-agent 0.15.1-agent.0'
+          docker pull \
+            '${{ steps.publish-images.outputs.dev_ref }}@${{ steps.publish-images.outputs.dev_digest }}'
+          docker run --rm \
+            '${{ steps.publish-images.outputs.dev_ref }}@${{ steps.publish-images.outputs.dev_digest }}' \
+            doctor --format json | grep -F '"status": "ok"'
+      - name: Move latest aliases and publish release last
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io \
+            --username "$GITHUB_ACTOR" --password-stdin
+          docker buildx imagetools create \
+            --tag '${{ steps.publish-images.outputs.compiler_ref }}:latest' \
+            '${{ steps.publish-images.outputs.compiler_ref }}@${{ steps.publish-images.outputs.compiler_digest }}'
+          docker buildx imagetools create \
+            --tag '${{ steps.publish-images.outputs.dev_ref }}:latest' \
+            '${{ steps.publish-images.outputs.dev_ref }}@${{ steps.publish-images.outputs.dev_digest }}'
+          gh release edit "$RELEASE_TAG" --draft=false --latest
+      - name: Verify anonymous release download
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$(sha256sum .tmp/agent/release/artifacts/agentctl | awk '{print $1}')"
+          curl --fail --location --silent --show-error \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/agentctl" \
+            --output /tmp/typst-agent-agentctl
+          actual="$(sha256sum /tmp/typst-agent-agentctl | awk '{print $1}')"
+          test "$actual" = "$expected"

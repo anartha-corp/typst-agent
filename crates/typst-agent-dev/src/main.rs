@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::fs;
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -58,8 +59,8 @@ enum CommandKind {
     UpstreamCheck,
     /// Run disposable deterministic control-plane checks.
     Eval,
-    /// Emit the source and release identity manifest.
-    ReleaseManifest,
+    /// Emit a complete source, artifact, and release identity manifest.
+    ReleaseManifest(ReleaseManifestArgs),
 }
 
 #[derive(Debug, Args)]
@@ -89,11 +90,87 @@ struct VerifyArgs {
     base: String,
 }
 
+#[derive(Debug, Args)]
+struct ReleaseManifestArgs {
+    /// Strict preparation evidence produced by the release workflow.
+    #[arg(long, default_value = ".tmp/agent/release/release-input.json")]
+    input: PathBuf,
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum VerifyTier {
     Fast,
     Pr,
     Full,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum ReleaseArtifactKind {
+    Binary,
+    CompilerImage,
+    DevImage,
+    Agentctl,
+    Documentation,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReleaseArtifactInput {
+    path: PathBuf,
+    kind: ReleaseArtifactKind,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReleaseSmokeInput {
+    subject: String,
+    platform: String,
+    evidence_path: PathBuf,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ReproducibilityEvidence {
+    target: String,
+    first_sha256: String,
+    second_sha256: String,
+    identical: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReleaseManifestInput {
+    release_tag: String,
+    artifacts: Vec<ReleaseArtifactInput>,
+    sbom_path: PathBuf,
+    sigstore_bundle_paths: Vec<PathBuf>,
+    provenance_attestation_paths: Vec<PathBuf>,
+    reproducibility: Vec<ReproducibilityEvidence>,
+    smoke_results: Vec<ReleaseSmokeInput>,
+}
+
+#[derive(Debug, Serialize)]
+struct ReleaseFileEvidence {
+    name: String,
+    sha256: String,
+    size: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct ReleaseArtifact {
+    name: String,
+    kind: ReleaseArtifactKind,
+    sha256: String,
+    size: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct ReleaseSmokeResult {
+    subject: String,
+    platform: String,
+    evidence: ReleaseFileEvidence,
+    passed: bool,
 }
 
 #[derive(Debug)]
@@ -464,7 +541,9 @@ fn dispatch(cli: &Cli) -> AppResult<(&'static str, Value)> {
         CommandKind::PolicyCheck => Ok(("policy-check", json_value(policy_check()?)?)),
         CommandKind::UpstreamCheck => Ok(("upstream-check", upstream_check()?)),
         CommandKind::Eval => Ok(("eval", eval()?)),
-        CommandKind::ReleaseManifest => Ok(("release-manifest", release_manifest()?)),
+        CommandKind::ReleaseManifest(args) => {
+            Ok(("release-manifest", release_manifest(&args.input)?))
+        }
     }
 }
 
@@ -482,7 +561,7 @@ fn command_name(command: &CommandKind) -> &'static str {
         CommandKind::PolicyCheck => "policy-check",
         CommandKind::UpstreamCheck => "upstream-check",
         CommandKind::Eval => "eval",
-        CommandKind::ReleaseManifest => "release-manifest",
+        CommandKind::ReleaseManifest(_) => "release-manifest",
     }
 }
 
@@ -2511,8 +2590,23 @@ fn require_eval_scope(task: &EvalTask, path: &str) -> AppResult<()> {
     }
 }
 
-fn release_manifest() -> AppResult<Value> {
+fn release_manifest(input_path: &Path) -> AppResult<Value> {
     let repo = root()?;
+    let input_path = release_evidence_path(&repo, input_path)?;
+    let input: ReleaseManifestInput =
+        serde_json::from_str(&read_semantic_text(&input_path)?).map_err(|error| {
+            AppError::invalid(format!("invalid release preparation evidence: {error}"))
+        })?;
+    if input.artifacts.is_empty()
+        || input.sigstore_bundle_paths.is_empty()
+        || input.provenance_attestation_paths.is_empty()
+        || input.reproducibility.is_empty()
+        || input.smoke_results.is_empty()
+    {
+        return Err(AppError::authority(
+            "release preparation evidence must contain artifacts, signatures, provenance, reproducibility, and smoke results",
+        ));
+    }
     let downstream_sha = require_success(
         run_command("git", ["rev-parse", "HEAD"], Some(&repo))?,
         "downstream ref",
@@ -2534,24 +2628,97 @@ fn release_manifest() -> AppResult<Value> {
     let value: toml::Value = cargo
         .parse()
         .map_err(|error| AppError::invalid(format!("invalid Cargo.toml: {error}")))?;
-    let version = value
+    let upstream_version = value
         .get("workspace")
         .and_then(|workspace| workspace.get("package"))
         .and_then(|package| package.get("version"))
         .and_then(toml::Value::as_str)
         .ok_or_else(|| AppError::invalid("workspace.package.version is missing"))?;
-    let manifest = json!({
-        "contract_version": CONTRACT_VERSION,
+    let cli: toml::Value = read_semantic_text(&repo.join("crates/typst-cli/Cargo.toml"))?
+        .parse()
+        .map_err(|error| AppError::invalid(format!("invalid CLI Cargo.toml: {error}")))?;
+    let downstream_version = cli
+        .get("package")
+        .and_then(|package| package.get("version"))
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| AppError::invalid("typst-cli package.version is missing"))?;
+    let expected_tag = format!("v{downstream_version}");
+    if input.release_tag != expected_tag {
+        return Err(AppError::verification(format!(
+            "release tag must be {expected_tag}, got {}",
+            input.release_tag
+        )));
+    }
+
+    let mut names = BTreeSet::new();
+    let mut artifacts = Vec::with_capacity(input.artifacts.len());
+    for artifact in input.artifacts {
+        let evidence = release_file_evidence(&repo, &artifact.path)?;
+        if !names.insert(evidence.name.clone()) {
+            return Err(AppError::invalid(format!(
+                "duplicate release artifact name: {}",
+                evidence.name
+            )));
+        }
+        artifacts.push(ReleaseArtifact {
+            name: evidence.name,
+            kind: artifact.kind,
+            sha256: evidence.sha256,
+            size: evidence.size,
+        });
+    }
+    artifacts.sort_by(|left, right| left.name.cmp(&right.name));
+
+    for reproducibility in &input.reproducibility {
+        if reproducibility.target.trim().is_empty()
+            || !valid_sha256(&reproducibility.first_sha256)
+            || !valid_sha256(&reproducibility.second_sha256)
+            || !reproducibility.identical
+            || reproducibility.first_sha256 != reproducibility.second_sha256
+        {
+            return Err(AppError::verification(format!(
+                "invalid reproducibility evidence for {}",
+                reproducibility.target
+            )));
+        }
+    }
+
+    let mut smoke_results = Vec::with_capacity(input.smoke_results.len());
+    for smoke in input.smoke_results {
+        if smoke.subject.trim().is_empty() || smoke.platform.trim().is_empty() {
+            return Err(AppError::invalid(
+                "release smoke subject and platform must be non-empty",
+            ));
+        }
+        smoke_results.push(ReleaseSmokeResult {
+            subject: smoke.subject,
+            platform: smoke.platform,
+            evidence: release_file_evidence(&repo, &smoke.evidence_path)?,
+            passed: true,
+        });
+    }
+    smoke_results.sort_by(|left, right| {
+        (&left.subject, &left.platform).cmp(&(&right.subject, &right.platform))
+    });
+
+    let payload = json!({
         "product": "typst-agent",
-        "upstream_version": version,
-        "release_tag": format!("v{version}-agent.0"),
+        "downstream_version": downstream_version,
+        "upstream_version": upstream_version,
+        "release_tag": input.release_tag,
         "upstream_sha": upstream_sha,
         "downstream_sha": downstream_sha,
-        "checksums": [],
-        "sbom": null,
-        "sigstore": null,
-        "provenance": null,
-        "reproducibility": {"required": true, "verified": false},
+        "artifacts": artifacts,
+        "sbom": release_file_evidence(&repo, &input.sbom_path)?,
+        "sigstore_bundles": release_file_evidence_list(&repo, &input.sigstore_bundle_paths)?,
+        "provenance_attestations": release_file_evidence_list(&repo, &input.provenance_attestation_paths)?,
+        "reproducibility": input.reproducibility,
+        "smoke_results": smoke_results,
+    });
+    let manifest = json!({
+        "contract_version": CONTRACT_VERSION,
+        "kind": "ReleaseManifest",
+        "payload": payload,
     });
     let directory = repo.join(".tmp/agent");
     fs::create_dir_all(&directory)
@@ -2562,7 +2729,86 @@ fn release_manifest() -> AppResult<Value> {
             .map_err(|error| AppError::invalid(error.to_string()))?,
     )
     .map_err(|error| AppError::authority(error.to_string()))?;
-    Ok(json!({"path": ".tmp/agent/release-manifest.json", "manifest": manifest}))
+    Ok(json!({"path": ".tmp/agent/release-manifest.json", "record": manifest}))
+}
+
+fn release_evidence_path(repo: &Path, path: &Path) -> AppResult<PathBuf> {
+    let path = normalize_repo_path(&path.to_string_lossy())?;
+    if !path.starts_with(".tmp/agent/release/") {
+        return Err(AppError::invalid(format!(
+            "release evidence must stay under .tmp/agent/release/: {path}"
+        )));
+    }
+    Ok(repo.join(path))
+}
+
+fn release_file_evidence(repo: &Path, path: &Path) -> AppResult<ReleaseFileEvidence> {
+    let full = release_evidence_path(repo, path)?;
+    let metadata = fs::metadata(&full).map_err(|error| {
+        AppError::authority(format!(
+            "cannot inspect release evidence {}: {error}",
+            full.display()
+        ))
+    })?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return Err(AppError::authority(format!(
+            "release evidence must be a non-empty file: {}",
+            full.display()
+        )));
+    }
+    let mut file = fs::File::open(&full).map_err(|error| {
+        AppError::authority(format!(
+            "cannot open release evidence {}: {error}",
+            full.display()
+        ))
+    })?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(|error| {
+            AppError::authority(format!(
+                "cannot hash release evidence {}: {error}",
+                full.display()
+            ))
+        })?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    let normalized = normalize_repo_path(&path.to_string_lossy())?;
+    let name = normalized
+        .strip_prefix(".tmp/agent/release/")
+        .unwrap_or(&normalized)
+        .to_owned();
+    Ok(ReleaseFileEvidence {
+        name,
+        sha256: digest_hex(&hasher.finalize()),
+        size: metadata.len(),
+    })
+}
+
+fn release_file_evidence_list(
+    repo: &Path,
+    paths: &[PathBuf],
+) -> AppResult<Vec<ReleaseFileEvidence>> {
+    let mut evidence = paths
+        .iter()
+        .map(|path| release_file_evidence(repo, path))
+        .collect::<AppResult<Vec<_>>>()?;
+    evidence.sort_by(|left, right| left.name.cmp(&right.name));
+    let unique = evidence.iter().map(|item| &item.name).collect::<BTreeSet<_>>();
+    if unique.len() != evidence.len() {
+        return Err(AppError::invalid("duplicate release evidence file"));
+    }
+    Ok(evidence)
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 #[cfg(test)]
@@ -2715,6 +2961,38 @@ unexpected: rejected
             sha256_hex(b"typst-agent"),
             "711190228c0141c926a99c4b0c119fcc6d80d0165b2612338f5fa3428b8570c6"
         );
+    }
+
+    #[test]
+    fn release_input_is_strict_and_evidence_paths_are_contained() {
+        let unknown = r#"{
+            "release_tag":"v0.15.1-agent.0",
+            "artifacts":[],
+            "sbom_path":".tmp/agent/release/sbom.json",
+            "sigstore_bundle_paths":[],
+            "provenance_attestation_paths":[],
+            "reproducibility":[],
+            "smoke_results":[],
+            "unexpected":true
+        }"#;
+        assert!(serde_json::from_str::<ReleaseManifestInput>(unknown).is_err());
+        assert!(
+            release_evidence_path(
+                Path::new("/repository"),
+                Path::new(".tmp/agent/release/artifact.tar.xz")
+            )
+            .is_ok()
+        );
+        assert!(
+            release_evidence_path(
+                Path::new("/repository"),
+                Path::new(".tmp/agent/release/../../credential")
+            )
+            .is_err()
+        );
+        assert!(valid_sha256(&"a".repeat(64)));
+        assert!(!valid_sha256(&"A".repeat(64)));
+        assert!(!valid_sha256("placeholder"));
     }
 
     #[test]

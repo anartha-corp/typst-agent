@@ -6,5 +6,7 @@ and contains checksums, signatures, SBOM, provenance, and upstream/downstream
 SHAs. Automation prepares artifacts but a human environment approval is needed
 to publish.
 
-Run `cargo agent upstream-check`, `cargo agent policy-check`, and
-`cargo agent release-manifest` before a release review.
+Run `cargo agent upstream-check` and `cargo agent policy-check` before a release
+review. After the preparation jobs have assembled bounded evidence, run
+`cargo agent release-manifest --input .tmp/agent/release/release-input.json`;
+missing preparation evidence is an unavailable-authority failure.

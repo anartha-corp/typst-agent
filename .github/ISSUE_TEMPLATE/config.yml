@@ -1,14 +1,8 @@
 blank_issues_enabled: true
 contact_links:
-  - name: 💻 Web App Issues
-    url: https://github.com/typst/webapp-issues/issues
-    about: Bug reports or feature requests for Typst's official web app
-  - name: 🏛️ Typst Forum
-    url: https://forum.typst.app/
-    about: Do you have a question instead of a specific bug or feature request? Open a question in the Forum!
-  - name: 💬 Typst Discord
-    url: https://discord.gg/2uDybryKPe
-    about: If you're unsure about your issue, join and chat with the community on our Discord server!
-  - name: 📨 Contact Us
-    url: https://typst.app/contact/
-    about: Did you have a bad interaction here or need to speak with the Typst Team privately? You can contact us directly.
+  - name: 💬 Typst Agent Discussions
+    url: https://github.com/anartha-corp/typst-agent/discussions
+    about: Ask downstream usage and development questions in the public discussion area.
+  - name: 🔒 Security reports
+    url: https://github.com/anartha-corp/typst-agent/blob/main/SECURITY.md
+    about: Follow the downstream security reporting policy for vulnerabilities or suspected secrets.

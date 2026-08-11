@@ -1,0 +1,5 @@
+# Human review is required for every release and every protected change.
+* @anartha-corp/typst-agent-maintainers
+/.github/ @anartha-corp/typst-agent-maintainers
+/crates/ @anartha-corp/typst-agent-maintainers
+/agent-contract/ @anartha-corp/typst-agent-maintainers

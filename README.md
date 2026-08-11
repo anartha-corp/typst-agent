@@ -1,6 +1,40 @@
-<h1 align="center">
-  <img alt="Typst" src="https://user-images.githubusercontent.com/17899797/226108480-722b770e-6313-40d7-84f2-26bebb55a281.png">
-</h1>
+# Typst Agent
+
+**Unofficial AI-assisted downstream of [Typst](https://github.com/typst/typst).**
+
+Typst Agent is an independently maintained, community downstream of the Typst
+compiler. It keeps the compiler/runtime model-free: there is no agent, MCP
+server, or LLM in the compiler process. Codex and other agents are development
+tools only and are governed by the repository contract in [`AGENTS.md`](AGENTS.md).
+
+This project is not affiliated with, sponsored by, or endorsed by Typst GmbH.
+The Typst name and marks remain the property of their respective owners. We do
+not use the Typst logo as this project's identity. Commercial distribution using
+the Typst name requires written permission; community source and releases follow
+the applicable brand guidance.
+
+The downstream binary is named `typst-agent` (the upstream `typst` binary is not
+published by this repository). Upstream history, tags, and attribution remain
+intact; downstream changes are never pushed to `typst/typst`.
+
+## Downstream development
+
+- `upstream` is fetch-only and points to `https://github.com/typst/typst.git`.
+- `mirror/upstream-main` contains only the exact upstream commit and is checked
+  by `cargo agent upstream-check`.
+- Every change is reviewed by a human before merge or release. AI-assisted
+  implementation is disclosed and does not transfer responsibility from the
+  human contributor.
+- Use `cargo agent doctor`, `cargo agent context`, `cargo agent impact`, and
+  `cargo agent verify --tier fast` before opening a pull request.
+
+For governance, disclosure, security reporting, and contribution requirements,
+see [`GOVERNANCE.md`](GOVERNANCE.md), [`AI_DISCLOSURE.md`](AI_DISCLOSURE.md),
+[`SECURITY.md`](SECURITY.md), and [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+---
+
+## Upstream compiler documentation
 
 <p align="center">
   <a href="https://typst.app/docs/">

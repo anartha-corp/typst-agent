@@ -1,5 +1,26 @@
-<!--
-Thanks for your interest in landing a change in Typst! Before opening the PR, please review our contribution guidelines: https://github.com/typst/typst/blob/main/CONTRIBUTING.md
+## Scope
 
-In particular, please keep in mind that we do not accept contributions implemented by an AI model. We would also ask you to refrain from using AI to write your pull request description. Summarizing your work helps organizing your thoughts as much as it helps us with seeing the human thought process behind a particular change.
--->
+<!-- Keep this PR focused. State the immediate predecessor PR when this is a
+     stacked change. Do not submit downstream work to Typst upstream. -->
+
+## Evidence
+
+- [ ] `cargo agent doctor`
+- [ ] `cargo agent policy-check`
+- [ ] `cargo agent verify --tier fast` (or explain why a different tier applies)
+- [ ] `cargo agent review-pack --base <ref>`
+
+## Invariant and upstream impact
+
+<!-- List affected invariant IDs and the upstream anchor/SHA, or state none. -->
+
+## AI disclosure
+
+- [ ] No AI assistance was used.
+- [ ] AI assistance was used and is disclosed in this description; I reviewed
+      the complete diff and own the result.
+
+## Human approval
+
+- [ ] I understand that merge and release require human CODEOWNER approval.
+- [ ] I signed off every commit (`git commit -s`).

@@ -1,9 +1,9 @@
-FROM --platform=$BUILDPLATFORM tonistiigi/xx:1.7.0@sha256:010d4b66aed389848b0694f91c7aaee9df59a6f20be7f5d12e53663a37bd14e2 AS xx
-FROM --platform=$BUILDPLATFORM rust:1.95.0-alpine3.23@sha256:606fd313a0f49743ee2a7bd49a0914bab7deedb12791f3a846a34a4711db7ed2 AS build
+FROM --platform=$BUILDPLATFORM docker.io/tonistiigi/xx:1.7.0@sha256:010d4b66aed389848b0694f91c7aaee9df59a6f20be7f5d12e53663a37bd14e2 AS xx
+FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.95.0-alpine3.23@sha256:606fd313a0f49743ee2a7bd49a0914bab7deedb12791f3a846a34a4711db7ed2 AS build
 
 COPY --from=xx / /
 
-RUN apk add --no-cache clang lld
+RUN apk add --no-cache clang lld make perl
 COPY . /app
 WORKDIR /app
 RUN --mount=type=cache,target=/root/.cargo/git/db \
@@ -19,15 +19,17 @@ RUN xx-apk add --no-cache musl-dev openssl-dev openssl-libs-static
 RUN --mount=type=cache,target=/root/.cargo/git/db \
     --mount=type=cache,target=/root/.cargo/registry/cache \
     --mount=type=cache,target=/root/.cargo/registry/index \
+    --mount=type=cache,target=/app/target \
     OPENSSL_NO_PKG_CONFIG=1 OPENSSL_STATIC=1 \
     TYPST_AGENT_COMMIT_SHA="$TYPST_AGENT_COMMIT_SHA" \
     OPENSSL_DIR=$(xx-info is-cross && echo /$(xx-info)/usr/ || echo /usr) \
     xx-cargo build --locked -p typst-cli --release --bin typst-agent \
       --features self-update,vendor-openssl && \
-    cp target/$(xx-cargo --print-target-triple)/release/typst-agent target/release/typst-agent && \
-    xx-verify target/release/typst-agent
+    mkdir -p /out && \
+    cp target/$(xx-cargo --print-target-triple)/release/typst-agent /out/typst-agent && \
+    xx-verify /out/typst-agent
 
-FROM alpine:3.23.3@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659
+FROM docker.io/library/alpine:3.23.3@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659
 ARG CREATED
 ARG REVISION
 
@@ -46,5 +48,5 @@ LABEL org.opencontainers.image.title="Typst Agent Docker image"
 LABEL org.opencontainers.image.url="https://github.com/anartha-corp/typst-agent"
 LABEL org.opencontainers.image.vendor="Anartha Corp"
 
-COPY --from=build  /app/target/release/typst-agent /bin
+COPY --from=build /out/typst-agent /bin/typst-agent
 ENTRYPOINT [ "/bin/typst-agent" ]

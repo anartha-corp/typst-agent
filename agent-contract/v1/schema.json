@@ -8,8 +8,378 @@
   "properties": {
     "contract_version": { "const": "agent-contract/v1" },
     "kind": {
-      "enum": ["AreaManifest", "InvariantRecord", "TaskContract", "ImpactReport", "VerificationEvidence", "ReviewEvidence", "UpstreamProvenance", "ReleaseManifest"]
+      "enum": [
+        "AreaManifest",
+        "InvariantRecord",
+        "TaskContract",
+        "ImpactReport",
+        "VerificationEvidence",
+        "ReviewEvidence",
+        "UpstreamProvenance",
+        "ReleaseManifest"
+      ]
     },
-    "payload": { "type": "object", "additionalProperties": true }
+    "payload": { "type": "object" }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "kind": { "const": "AreaManifest" },
+        "payload": { "$ref": "#/$defs/AreaManifest" }
+      }
+    },
+    {
+      "properties": {
+        "kind": { "const": "InvariantRecord" },
+        "payload": { "$ref": "#/$defs/InvariantRecord" }
+      }
+    },
+    {
+      "properties": {
+        "kind": { "const": "TaskContract" },
+        "payload": { "$ref": "#/$defs/TaskContract" }
+      }
+    },
+    {
+      "properties": {
+        "kind": { "const": "ImpactReport" },
+        "payload": { "$ref": "#/$defs/ImpactReport" }
+      }
+    },
+    {
+      "properties": {
+        "kind": { "const": "VerificationEvidence" },
+        "payload": { "$ref": "#/$defs/VerificationEvidence" }
+      }
+    },
+    {
+      "properties": {
+        "kind": { "const": "ReviewEvidence" },
+        "payload": { "$ref": "#/$defs/ReviewEvidence" }
+      }
+    },
+    {
+      "properties": {
+        "kind": { "const": "UpstreamProvenance" },
+        "payload": { "$ref": "#/$defs/UpstreamProvenance" }
+      }
+    },
+    {
+      "properties": {
+        "kind": { "const": "ReleaseManifest" },
+        "payload": { "$ref": "#/$defs/ReleaseManifest" }
+      }
+    }
+  ],
+  "$defs": {
+    "NonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "StringArray": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/NonEmptyString" },
+      "uniqueItems": true
+    },
+    "NonEmptyStringArray": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/NonEmptyString" },
+      "uniqueItems": true
+    },
+    "GitSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "Sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "AreaManifest": {
+      "type": "object",
+      "required": ["manifest_version", "rules"],
+      "additionalProperties": false,
+      "properties": {
+        "manifest_version": { "const": 1 },
+        "rules": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/AreaRule" }
+        }
+      }
+    },
+    "AreaRule": {
+      "type": "object",
+      "required": [
+        "id",
+        "path_prefixes",
+        "exact_paths",
+        "authority_sources",
+        "guide",
+        "required_checks",
+        "invariant_ids"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/NonEmptyString" },
+        "path_prefixes": { "$ref": "#/$defs/StringArray" },
+        "exact_paths": { "$ref": "#/$defs/StringArray" },
+        "authority_sources": { "$ref": "#/$defs/NonEmptyStringArray" },
+        "guide": { "$ref": "#/$defs/NonEmptyString" },
+        "required_checks": { "$ref": "#/$defs/NonEmptyStringArray" },
+        "invariant_ids": { "$ref": "#/$defs/NonEmptyStringArray" }
+      },
+      "anyOf": [
+        { "properties": { "path_prefixes": { "minItems": 1 } } },
+        { "properties": { "exact_paths": { "minItems": 1 } } }
+      ]
+    },
+    "InvariantRecord": {
+      "type": "object",
+      "required": [
+        "id",
+        "scope",
+        "statement",
+        "rationale",
+        "authority_source",
+        "required_checks",
+        "review_prompts",
+        "upstream_anchor",
+        "upstream_sha"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/NonEmptyString" },
+        "scope": { "$ref": "#/$defs/NonEmptyString" },
+        "statement": { "$ref": "#/$defs/NonEmptyString" },
+        "rationale": { "$ref": "#/$defs/NonEmptyString" },
+        "authority_source": { "$ref": "#/$defs/NonEmptyString" },
+        "required_checks": { "$ref": "#/$defs/NonEmptyStringArray" },
+        "review_prompts": { "$ref": "#/$defs/NonEmptyStringArray" },
+        "upstream_anchor": { "$ref": "#/$defs/NonEmptyString" },
+        "upstream_sha": { "$ref": "#/$defs/GitSha" }
+      }
+    },
+    "TaskContract": {
+      "type": "object",
+      "required": [
+        "task_id",
+        "objective",
+        "owned_paths",
+        "excluded_paths",
+        "invariant_ids",
+        "upstream_anchor",
+        "upstream_sha",
+        "required_checks",
+        "human_approval_required"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "task_id": { "$ref": "#/$defs/NonEmptyString" },
+        "objective": { "$ref": "#/$defs/NonEmptyString" },
+        "owned_paths": { "$ref": "#/$defs/NonEmptyStringArray" },
+        "excluded_paths": { "$ref": "#/$defs/StringArray" },
+        "invariant_ids": { "$ref": "#/$defs/NonEmptyStringArray" },
+        "upstream_anchor": { "$ref": "#/$defs/NonEmptyString" },
+        "upstream_sha": { "$ref": "#/$defs/GitSha" },
+        "required_checks": { "$ref": "#/$defs/NonEmptyStringArray" },
+        "human_approval_required": { "const": true }
+      }
+    },
+    "ImpactReport": {
+      "type": "object",
+      "required": [
+        "base",
+        "base_sha",
+        "head_sha",
+        "changed_paths",
+        "changed_packages",
+        "reverse_dependencies",
+        "scoped_guides",
+        "invariant_ids"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "base": { "$ref": "#/$defs/NonEmptyString" },
+        "base_sha": { "$ref": "#/$defs/GitSha" },
+        "head_sha": { "$ref": "#/$defs/GitSha" },
+        "changed_paths": { "$ref": "#/$defs/StringArray" },
+        "changed_packages": { "$ref": "#/$defs/StringArray" },
+        "reverse_dependencies": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/StringArray" }
+        },
+        "scoped_guides": { "$ref": "#/$defs/StringArray" },
+        "invariant_ids": { "$ref": "#/$defs/StringArray" }
+      }
+    },
+    "CheckEvidence": {
+      "type": "object",
+      "required": ["name", "status", "exit_code", "output_sha256", "output_bytes"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/NonEmptyString" },
+        "status": { "enum": ["passed", "failed", "unavailable"] },
+        "exit_code": { "type": ["integer", "null"] },
+        "output_sha256": { "$ref": "#/$defs/Sha256" },
+        "output_bytes": { "type": "integer", "minimum": 0, "maximum": 65536 }
+      }
+    },
+    "VerificationEvidence": {
+      "type": "object",
+      "required": [
+        "tier",
+        "base_sha",
+        "head_sha",
+        "changed_paths",
+        "dirty_fingerprint",
+        "selected_tests",
+        "checks",
+        "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "tier": { "enum": ["fast", "pr", "full"] },
+        "base_sha": { "$ref": "#/$defs/GitSha" },
+        "head_sha": { "$ref": "#/$defs/GitSha" },
+        "changed_paths": { "$ref": "#/$defs/StringArray" },
+        "dirty_fingerprint": { "$ref": "#/$defs/Sha256" },
+        "selected_tests": { "$ref": "#/$defs/StringArray" },
+        "checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/CheckEvidence" }
+        },
+        "status": { "enum": ["passed", "failed", "unavailable"] }
+      }
+    },
+    "ReferenceEvidence": {
+      "type": "object",
+      "required": ["path", "visual_report", "invariant_impact", "approved_head_sha", "human_approved"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "$ref": "#/$defs/NonEmptyString" },
+        "visual_report": { "$ref": "#/$defs/NonEmptyString" },
+        "invariant_impact": { "$ref": "#/$defs/NonEmptyString" },
+        "approved_head_sha": { "$ref": "#/$defs/GitSha" },
+        "human_approved": { "const": true }
+      }
+    },
+    "ReviewEvidence": {
+      "type": "object",
+      "required": [
+        "base_sha",
+        "head_sha",
+        "dirty_fingerprint",
+        "invariant_records",
+        "review_prompts",
+        "selected_tests",
+        "reference_evidence",
+        "evidence_created_head_sha",
+        "freshness"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "base_sha": { "$ref": "#/$defs/GitSha" },
+        "head_sha": { "$ref": "#/$defs/GitSha" },
+        "dirty_fingerprint": { "$ref": "#/$defs/Sha256" },
+        "invariant_records": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/InvariantRecord" }
+        },
+        "review_prompts": { "$ref": "#/$defs/StringArray" },
+        "selected_tests": { "$ref": "#/$defs/StringArray" },
+        "reference_evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ReferenceEvidence" }
+        },
+        "evidence_created_head_sha": { "$ref": "#/$defs/GitSha" },
+        "freshness": { "enum": ["current", "stale"] }
+      }
+    },
+    "UpstreamTag": {
+      "type": "object",
+      "required": ["name", "sha"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/NonEmptyString" },
+        "sha": { "$ref": "#/$defs/GitSha" }
+      }
+    },
+    "UpstreamProvenance": {
+      "type": "object",
+      "required": ["upstream_url", "upstream_sha", "mirror_sha", "tags", "push_url_inert", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "upstream_url": { "const": "https://github.com/typst/typst.git" },
+        "upstream_sha": { "$ref": "#/$defs/GitSha" },
+        "mirror_sha": { "$ref": "#/$defs/GitSha" },
+        "tags": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/UpstreamTag" }
+        },
+        "push_url_inert": { "const": true },
+        "status": { "enum": ["identical", "drifted", "unavailable"] }
+      }
+    },
+    "ReleaseArtifact": {
+      "type": "object",
+      "required": ["name", "kind", "sha256", "size"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/NonEmptyString" },
+        "kind": { "enum": ["binary", "compiler-image", "dev-image", "agentctl", "documentation"] },
+        "sha256": { "$ref": "#/$defs/Sha256" },
+        "size": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "ReleaseManifest": {
+      "type": "object",
+      "required": [
+        "product",
+        "upstream_version",
+        "release_tag",
+        "upstream_sha",
+        "downstream_sha",
+        "artifacts",
+        "sbom_sha256",
+        "sigstore_bundles",
+        "provenance_attestations",
+        "reproducibility",
+        "smoke_results"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "product": { "const": "typst-agent" },
+        "upstream_version": { "$ref": "#/$defs/NonEmptyString" },
+        "release_tag": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+-agent\\.[0-9]+$" },
+        "upstream_sha": { "$ref": "#/$defs/GitSha" },
+        "downstream_sha": { "$ref": "#/$defs/GitSha" },
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/ReleaseArtifact" }
+        },
+        "sbom_sha256": { "$ref": "#/$defs/Sha256" },
+        "sigstore_bundles": { "$ref": "#/$defs/NonEmptyStringArray" },
+        "provenance_attestations": { "$ref": "#/$defs/NonEmptyStringArray" },
+        "reproducibility": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["target", "first_sha256", "second_sha256", "identical"],
+            "additionalProperties": false,
+            "properties": {
+              "target": { "$ref": "#/$defs/NonEmptyString" },
+              "first_sha256": { "$ref": "#/$defs/Sha256" },
+              "second_sha256": { "$ref": "#/$defs/Sha256" },
+              "identical": { "const": true }
+            }
+          }
+        },
+        "smoke_results": { "$ref": "#/$defs/NonEmptyStringArray" }
+      }
+    }
   }
 }

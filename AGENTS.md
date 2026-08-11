@@ -11,8 +11,9 @@ in this repository may write to `typst/typst`.
    authority. Documentation describes intent and must not override executable
    behavior.
 2. `agent-contract/v1/` contains the versioned machine-readable development
-   contract. `.agents/areas/` and `.agents/invariants/` provide progressive
-   guidance; keep this file short.
+   contract. `.agents/area-manifest.json` is the routing authority;
+   `.agents/areas/` and `.agents/invariants/` provide progressive guidance.
+   Keep this file short.
 3. Before editing, run `cargo agent doctor` and inspect the relevant area guide.
    Keep changes on a task branch named
    `execute-plan/typst-agent-native-pr-<n>-<slug>`.

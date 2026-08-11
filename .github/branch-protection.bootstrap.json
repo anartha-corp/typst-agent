@@ -1,0 +1,20 @@
+{
+  "required_status_checks": {
+    "strict": true,
+    "contexts": [
+      "Tests",
+      "Check clippy, formatting, and crate docs",
+      "Check documentation (website and PDF)",
+      "Check minimum Rust version",
+      "Check fuzzers",
+      "Check unsafe code",
+      "Human owner approval"
+    ]
+  },
+  "required_pull_request_reviews": null,
+  "enforce_admins": true,
+  "required_conversation_resolution": false,
+  "restrictions": null,
+  "allow_force_pushes": false,
+  "allow_deletions": false
+}

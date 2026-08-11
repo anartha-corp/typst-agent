@@ -1,0 +1,55 @@
+name: Downstream nightly assurance
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '41 2 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-and-drift:
+    name: Dependency audit and invariant drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+      - name: Configure fetch-only upstream
+        run: |
+          git remote add upstream https://github.com/typst/typst.git
+          git remote set-url --push upstream https://invalid.example/typst/typst.git
+      - name: Dependency security audit
+        run: |
+          cargo install --locked cargo-audit@0.21.2
+          cargo audit
+      - name: Contract and invariant drift
+        run: |
+          cargo agent doctor --format json
+          cargo agent policy-check --format json
+          git diff --exit-code
+      - name: Upstream sync dry-run
+        run: |
+          git fetch --tags upstream main
+          cargo agent upstream-check --format json
+
+  fuzz-rotation:
+    name: Runtime fuzz rotation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # pinned installer
+        with:
+          toolchain: nightly-2025-10-28
+      - run: cargo install --locked cargo-fuzz@0.12.0
+      - name: Select and run one target
+        working-directory: tests/fuzz
+        run: |
+          mapfile -t targets < <(cargo fuzz list)
+          test "${#targets[@]}" -gt 0
+          index=$((GITHUB_RUN_NUMBER % ${#targets[@]}))
+          target="${targets[$index]}"
+          echo "fuzz_target=$target"
+          cargo fuzz run "$target" -- -max_total_time=60

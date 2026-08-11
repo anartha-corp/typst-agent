@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+  merge_group:
   schedule:
     - cron: '23 3 * * 1'
 
@@ -19,8 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@b1722c1245f90604c2c348f9d1624af97ea8fc6e # v3.29.0
         with:
           languages: rust
-      - uses: github/codeql-action/autobuild@v3
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/autobuild@b1722c1245f90604c2c348f9d1624af97ea8fc6e # v3.29.0
+      - uses: github/codeql-action/analyze@b1722c1245f90604c2c348f9d1624af97ea8fc6e # v3.29.0

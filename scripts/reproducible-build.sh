@@ -34,6 +34,9 @@ export TYPST_AGENT_COMMIT_SHA="$downstream_sha"
 # removes the PDB that link.exe must not reuse.
 if [[ "$target" == *-pc-windows-msvc ]]; then
   export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-Clink-arg=/Brepro"
+  # Git Bash converts slash-prefixed values in environment variables before
+  # launching native Windows programs. Keep /Brepro intact for Cargo/rustc.
+  export MSYS2_ENV_CONV_EXCL="RUSTFLAGS${MSYS2_ENV_CONV_EXCL:+;$MSYS2_ENV_CONV_EXCL}"
 fi
 
 build_once() {

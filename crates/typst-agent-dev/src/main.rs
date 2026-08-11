@@ -10,11 +10,13 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
 const CONTRACT_VERSION: &str = "agent-contract/v1";
 const MAX_OUTPUT_BYTES: usize = 64 * 1024;
+const MAX_SEMANTIC_EVIDENCE_BYTES: u64 = 1024 * 1024;
+const MAX_SEMANTIC_COMMAND_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -124,12 +126,14 @@ struct Envelope {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct InvariantFile {
     version: u32,
     records: Vec<InvariantRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct InvariantRecord {
     id: String,
     scope: String,
@@ -140,6 +144,53 @@ struct InvariantRecord {
     review_prompts: Vec<String>,
     upstream_anchor: String,
     upstream_sha: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AreaManifestEnvelope {
+    contract_version: String,
+    kind: String,
+    payload: AreaManifest,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AreaManifest {
+    manifest_version: u32,
+    rules: Vec<AreaRule>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AreaRule {
+    id: String,
+    path_prefixes: Vec<String>,
+    exact_paths: Vec<String>,
+    authority_sources: Vec<String>,
+    guide: String,
+    required_checks: Vec<String>,
+    invariant_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct DoctorReport {
+    contract_version: &'static str,
+    invariant_count: usize,
+    area_count: usize,
+    repository: String,
+    required_files: Vec<String>,
+    upstream_push_url: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ContextReport {
+    paths: Vec<String>,
+    area_ids: Vec<String>,
+    authority_sources: Vec<String>,
+    guides: Vec<String>,
+    required_checks: Vec<String>,
+    invariants: Vec<InvariantRecord>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -163,12 +214,28 @@ struct PackageDependency {
 #[derive(Debug, Serialize)]
 struct ImpactReport {
     base: String,
-    head: String,
+    base_sha: String,
+    head_sha: String,
     changed_paths: Vec<String>,
     changed_packages: Vec<String>,
     reverse_dependencies: BTreeMap<String, Vec<String>>,
     scoped_guides: Vec<String>,
     invariant_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct PolicyViolation {
+    code: String,
+    path: String,
+    detail: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PolicyReport {
+    checked: &'static str,
+    inspected_files: usize,
+    upstream_push_url: String,
+    violations: Vec<PolicyViolation>,
 }
 
 #[derive(Debug, Serialize)]
@@ -216,24 +283,24 @@ fn main() {
 
 fn dispatch(cli: &Cli) -> AppResult<(&'static str, Value)> {
     match &cli.command {
-        CommandKind::Doctor => Ok(("doctor", doctor()?)),
-        CommandKind::Context(args) => Ok(("context", context(args)?)),
-        CommandKind::Impact(args) => Ok((
-            "impact",
-            serde_json::to_value(impact(&args.base)?)
-                .map_err(|error| AppError::invalid(error.to_string()))?,
-        )),
+        CommandKind::Doctor => Ok(("doctor", json_value(doctor()?)?)),
+        CommandKind::Context(args) => Ok(("context", json_value(context(args)?)?)),
+        CommandKind::Impact(args) => Ok(("impact", json_value(impact(&args.base)?)?)),
         CommandKind::Verify(args) => Ok((
             "verify",
             serde_json::to_value(verify(args.tier)?)
                 .map_err(|error| AppError::invalid(error.to_string()))?,
         )),
         CommandKind::ReviewPack(args) => Ok(("review-pack", review_pack(&args.base)?)),
-        CommandKind::PolicyCheck => Ok(("policy-check", policy_check()?)),
+        CommandKind::PolicyCheck => Ok(("policy-check", json_value(policy_check()?)?)),
         CommandKind::UpstreamCheck => Ok(("upstream-check", upstream_check()?)),
         CommandKind::Eval => Ok(("eval", eval()?)),
         CommandKind::ReleaseManifest => Ok(("release-manifest", release_manifest()?)),
     }
+}
+
+fn json_value<T: Serialize>(value: T) -> AppResult<Value> {
+    serde_json::to_value(value).map_err(|error| AppError::invalid(error.to_string()))
 }
 
 fn command_name(command: &CommandKind) -> &'static str {
@@ -298,10 +365,17 @@ where
     let output = command.stdin(Stdio::null()).output().map_err(|error| {
         AppError::authority(format!("failed to run {program}: {error}"))
     })?;
+    if output.stdout.len() > MAX_SEMANTIC_COMMAND_BYTES
+        || output.stderr.len() > MAX_SEMANTIC_COMMAND_BYTES
+    {
+        return Err(AppError::authority(format!(
+            "semantic command output exceeded {MAX_SEMANTIC_COMMAND_BYTES} bytes: {program}"
+        )));
+    }
     Ok(CommandOutput {
         status: output.status.code(),
-        stdout: bounded(String::from_utf8_lossy(&output.stdout).into_owned()),
-        stderr: bounded(String::from_utf8_lossy(&output.stderr).into_owned()),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     })
 }
 
@@ -314,7 +388,11 @@ struct CommandOutput {
 
 fn bounded(mut output: String) -> String {
     if output.len() > MAX_OUTPUT_BYTES {
-        output.truncate(MAX_OUTPUT_BYTES);
+        let mut boundary = MAX_OUTPUT_BYTES;
+        while !output.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        output.truncate(boundary);
         output.push_str("\n[output truncated]");
     }
     output
@@ -324,15 +402,32 @@ fn require_success(output: CommandOutput, label: &str) -> AppResult<String> {
     if output.status == Some(0) {
         Ok(output.stdout)
     } else {
-        Err(AppError::authority(format!("{label} failed: {}", output.stderr.trim())))
+        Err(AppError::authority(bounded(format!(
+            "{label} failed: {}",
+            output.stderr.trim()
+        ))))
     }
+}
+
+fn read_semantic_text(path: &Path) -> AppResult<String> {
+    let metadata = fs::metadata(path).map_err(|error| {
+        AppError::authority(format!("cannot inspect {}: {error}", path.display()))
+    })?;
+    if metadata.len() > MAX_SEMANTIC_EVIDENCE_BYTES {
+        return Err(AppError::authority(format!(
+            "semantic evidence exceeds {} bytes: {}",
+            MAX_SEMANTIC_EVIDENCE_BYTES,
+            path.display()
+        )));
+    }
+    fs::read_to_string(path).map_err(|error| {
+        AppError::authority(format!("cannot read {}: {error}", path.display()))
+    })
 }
 
 fn read_invariants(repo: &Path) -> AppResult<InvariantFile> {
     let path = repo.join(".agents/invariants.yml");
-    let content = fs::read_to_string(&path).map_err(|error| {
-        AppError::authority(format!("cannot read {}: {error}", path.display()))
-    })?;
+    let content = read_semantic_text(&path)?;
     let file: InvariantFile = serde_yaml::from_str(&content).map_err(|error| {
         AppError::invalid(format!("invalid invariant registry: {error}"))
     })?;
@@ -344,13 +439,94 @@ fn read_invariants(repo: &Path) -> AppResult<InvariantFile> {
     Ok(file)
 }
 
-fn doctor() -> AppResult<Value> {
+fn read_area_manifest(repo: &Path) -> AppResult<AreaManifest> {
+    let path = repo.join(".agents/area-manifest.json");
+    let content = read_semantic_text(&path)?;
+    let envelope: AreaManifestEnvelope = serde_json::from_str(&content)
+        .map_err(|error| AppError::invalid(format!("invalid area manifest: {error}")))?;
+    if envelope.contract_version != CONTRACT_VERSION || envelope.kind != "AreaManifest" {
+        return Err(AppError::invalid(
+            "area manifest must be an agent-contract/v1 AreaManifest record",
+        ));
+    }
+    if envelope.payload.manifest_version != 1 || envelope.payload.rules.is_empty() {
+        return Err(AppError::invalid(
+            "area manifest must have version 1 and at least one rule",
+        ));
+    }
+    Ok(envelope.payload)
+}
+
+fn validate_contract_schema(repo: &Path) -> AppResult<()> {
+    let path = repo.join("agent-contract/v1/schema.json");
+    let schema: Value =
+        serde_json::from_str(&read_semantic_text(&path)?).map_err(|error| {
+            AppError::invalid(format!("contract schema is not JSON: {error}"))
+        })?;
+    let schema_id = schema.get("$id").and_then(Value::as_str).unwrap_or_default();
+    if !schema_id.ends_with("/agent-contract/v1/schema.json") {
+        return Err(AppError::invalid("contract schema has an unexpected $id"));
+    }
+    let expected = BTreeSet::from([
+        "AreaManifest",
+        "ImpactReport",
+        "InvariantRecord",
+        "ReleaseManifest",
+        "ReviewEvidence",
+        "TaskContract",
+        "UpstreamProvenance",
+        "VerificationEvidence",
+    ]);
+    let actual = schema
+        .pointer("/properties/kind/enum")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<BTreeSet<_>>();
+    if actual != expected {
+        return Err(AppError::invalid(
+            "contract schema must define exactly the eight v1 record kinds",
+        ));
+    }
+    let definitions = schema
+        .get("$defs")
+        .and_then(Value::as_object)
+        .ok_or_else(|| AppError::invalid("contract schema has no $defs object"))?;
+    for kind in expected {
+        let definition = definitions
+            .get(kind)
+            .and_then(Value::as_object)
+            .ok_or_else(|| AppError::invalid(format!("contract schema has no {kind}")))?;
+        if definition.get("additionalProperties") != Some(&Value::Bool(false)) {
+            return Err(AppError::invalid(format!(
+                "contract record {kind} must reject unknown fields"
+            )));
+        }
+        if definition
+            .get("required")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty)
+        {
+            return Err(AppError::invalid(format!(
+                "contract record {kind} must require its fields"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn doctor() -> AppResult<DoctorReport> {
     let repo = root()?;
     let required = [
         "AGENTS.md",
         "agent-contract/v1/schema.json",
         ".agents/INDEX.md",
+        ".agents/area-manifest.json",
         ".agents/invariants.yml",
+        ".github/AGENTS.md",
+        "crates/AGENTS.md",
+        "tests/AGENTS.md",
         "crates/typst-agent-dev/Cargo.toml",
     ];
     let missing: Vec<&str> = required
@@ -364,16 +540,38 @@ fn doctor() -> AppResult<Value> {
             missing.join(", ")
         )));
     }
-    let schema: Value = serde_json::from_str(
-        &fs::read_to_string(repo.join("agent-contract/v1/schema.json"))
-            .map_err(|e| AppError::authority(e.to_string()))?,
-    )
-    .map_err(|e| AppError::invalid(format!("contract schema is not JSON: {e}")))?;
-    let schema_id = schema.get("$id").and_then(Value::as_str).unwrap_or_default();
-    if !schema_id.ends_with("/agent-contract/v1/schema.json") {
-        return Err(AppError::invalid("contract schema has an unexpected $id"));
-    }
+    validate_contract_schema(&repo)?;
     let invariants = read_invariants(&repo)?;
+    let manifest = read_area_manifest(&repo)?;
+    let invariant_ids = invariants
+        .records
+        .iter()
+        .map(|record| record.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut rule_ids = BTreeSet::new();
+    for rule in &manifest.rules {
+        if !rule_ids.insert(rule.id.as_str()) {
+            return Err(AppError::invalid(format!("duplicate area rule: {}", rule.id)));
+        }
+        normalize_repo_path(&rule.guide)?;
+        if !repo.join(&rule.guide).is_file() {
+            return Err(AppError::authority(format!(
+                "area guide is unavailable: {}",
+                rule.guide
+            )));
+        }
+        for path in rule.path_prefixes.iter().chain(&rule.exact_paths) {
+            normalize_repo_path(path)?;
+        }
+        for invariant in &rule.invariant_ids {
+            if !invariant_ids.contains(invariant.as_str()) {
+                return Err(AppError::invalid(format!(
+                    "area {} names unknown invariant {invariant}",
+                    rule.id
+                )));
+            }
+        }
+    }
     let push_url =
         run_command("git", ["remote", "get-url", "--push", "upstream"], Some(&repo))?;
     let push_url = push_url.stdout.trim().to_string();
@@ -382,122 +580,156 @@ fn doctor() -> AppResult<Value> {
             "upstream must have an invalid fetch-only push URL",
         ));
     }
-    Ok(json!({
-        "repository": repo.display().to_string(),
-        "required_files": required,
-        "invariant_count": invariants.records.len(),
-        "upstream_push_url": push_url,
-        "contract_version": CONTRACT_VERSION,
-    }))
+    Ok(DoctorReport {
+        contract_version: CONTRACT_VERSION,
+        invariant_count: invariants.records.len(),
+        area_count: manifest.rules.len(),
+        repository: repo.display().to_string(),
+        required_files: required.into_iter().map(str::to_owned).collect(),
+        upstream_push_url: push_url,
+    })
 }
 
 fn changed_paths(repo: &Path, base: Option<&str>) -> AppResult<Vec<String>> {
-    let output = if let Some(base) = base {
-        run_command(
+    let mut paths = BTreeSet::new();
+    if let Some(base) = base {
+        let output = run_command(
             "git",
-            ["diff", "--name-only", "--diff-filter=ACMRTUXB", &format!("{base}...HEAD")],
+            ["diff", "--name-only", "--diff-filter=ACDMRTUXB", &format!("{base}...HEAD")],
             Some(repo),
-        )?
+        )?;
+        collect_paths(&output, &mut paths)?;
     } else {
-        run_command("git", ["status", "--short"], Some(repo))?
-    };
+        let tracked = run_command(
+            "git",
+            ["diff", "--name-only", "--diff-filter=ACDMRTUXB", "HEAD"],
+            Some(repo),
+        )?;
+        collect_paths(&tracked, &mut paths)?;
+        let untracked = run_command(
+            "git",
+            ["ls-files", "--others", "--exclude-standard"],
+            Some(repo),
+        )?;
+        collect_paths(&untracked, &mut paths)?;
+    }
+    Ok(paths.into_iter().collect())
+}
+
+fn collect_paths(output: &CommandOutput, paths: &mut BTreeSet<String>) -> AppResult<()> {
     if output.status != Some(0) {
         return Err(AppError::authority(format!(
             "cannot enumerate changed paths: {}",
             output.stderr.trim()
         )));
     }
-    let mut paths = BTreeSet::new();
     for line in output.stdout.lines() {
-        let path = if base.is_some() {
-            line.trim()
-        } else {
-            line.get(3..).unwrap_or(line).trim()
-        };
+        let path = line.trim();
         if !path.is_empty() {
-            paths.insert(path.replace('\\', "/"));
+            paths.insert(normalize_repo_path(path)?);
         }
     }
-    Ok(paths.into_iter().collect())
+    Ok(())
 }
 
-fn context(args: &ContextArgs) -> AppResult<Value> {
+fn normalize_repo_path(path: &str) -> AppResult<String> {
+    if path.is_empty() {
+        return Err(AppError::invalid("repository path cannot be empty"));
+    }
+    let portable = path.replace('\\', "/");
+    let candidate = Path::new(&portable);
+    let windows_absolute = portable.starts_with("//")
+        || portable.as_bytes().get(1) == Some(&b':')
+            && portable.as_bytes().first().is_some_and(u8::is_ascii_alphabetic);
+    if candidate.is_absolute()
+        || windows_absolute
+        || candidate.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(AppError::invalid(format!(
+            "repository path must be relative and contained: {path}"
+        )));
+    }
+    let normalized = candidate
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(part) => Some(part.to_string_lossy()),
+            Component::CurDir => None,
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    if normalized.is_empty() {
+        return Err(AppError::invalid("repository path cannot resolve to empty"));
+    }
+    Ok(normalized)
+}
+
+fn context(args: &ContextArgs) -> AppResult<ContextReport> {
     let repo = root()?;
     let paths = if args.paths.is_empty() {
         changed_paths(&repo, None)?
     } else {
         args.paths
             .iter()
-            .map(|path| path.to_string_lossy().replace('\\', "/"))
-            .collect()
+            .map(|path| normalize_repo_path(&path.to_string_lossy()))
+            .collect::<AppResult<Vec<_>>>()?
     };
     let invariants = read_invariants(&repo)?;
+    let manifest = read_area_manifest(&repo)?;
+    let invariant_by_id = invariants
+        .records
+        .into_iter()
+        .map(|record| (record.id.clone(), record))
+        .collect::<BTreeMap<_, _>>();
+    let mut area_ids = BTreeSet::new();
+    let mut authorities = BTreeSet::new();
     let mut guides = BTreeSet::new();
-    let mut records = BTreeMap::new();
+    let mut checks = BTreeSet::new();
+    let mut record_ids = BTreeSet::new();
     for path in &paths {
-        if let Some(guide) = guide_for_path(path) {
-            guides.insert(guide.to_string());
-        }
-        for invariant in &invariants.records {
-            if path == &invariant.scope
-                || path.starts_with(&format!("{}/", invariant.scope))
-            {
-                records.insert(invariant.id.clone(), invariant.clone());
+        for rule in &manifest.rules {
+            if rule_matches_path(rule, path) {
+                area_ids.insert(rule.id.clone());
+                guides.insert(rule.guide.clone());
+                authorities.extend(rule.authority_sources.iter().cloned());
+                checks.extend(rule.required_checks.iter().cloned());
+                record_ids.extend(rule.invariant_ids.iter().cloned());
             }
         }
     }
     if paths.is_empty() {
         guides.insert(".agents/INDEX.md".into());
+        authorities.insert(".agents/area-manifest.json".into());
     }
-    Ok(
-        json!({"paths": paths, "guides": guides.into_iter().collect::<Vec<_>>(), "invariants": records.into_values().collect::<Vec<_>>() }),
-    )
+    let records = record_ids
+        .into_iter()
+        .filter_map(|id| invariant_by_id.get(&id).cloned())
+        .collect();
+    Ok(ContextReport {
+        paths,
+        area_ids: area_ids.into_iter().collect(),
+        authority_sources: authorities.into_iter().collect(),
+        guides: guides.into_iter().collect(),
+        required_checks: checks.into_iter().collect(),
+        invariants: records,
+    })
 }
 
-fn guide_for_path(path: &str) -> Option<&'static str> {
-    let guide = if path.starts_with("crates/typst-syntax/") {
-        ".agents/areas/parser-spans.md"
-    } else if path.starts_with("crates/typst-eval/")
-        || path.starts_with("crates/typst-library/")
-    {
-        ".agents/areas/evaluation.md"
-    } else if path.starts_with("crates/typst-layout/")
-        || path.starts_with("crates/typst-realize/")
-        || path.starts_with("crates/typst/")
-    {
-        ".agents/areas/layout.md"
-    } else if path.starts_with("crates/typst-ide/") {
-        ".agents/areas/ide.md"
-    } else if path.starts_with("crates/typst-cli/") {
-        ".agents/areas/cli.md"
-    } else if path.starts_with("crates/typst-pdf/")
-        || path.starts_with("crates/typst-render/")
-        || path.starts_with("crates/typst-svg/")
-    {
-        ".agents/areas/output.md"
-    } else if path.starts_with("tests/") {
-        ".agents/areas/tests.md"
-    } else if path.starts_with(".github/")
-        || path == "Dockerfile"
-        || path.starts_with("scripts/")
-    {
-        ".agents/areas/release.md"
-    } else if path.starts_with(".agents/")
-        || path.starts_with("agent-contract/")
-        || path == "AGENTS.md"
-    {
-        "AGENTS.md"
-    } else {
-        return None;
-    };
-    Some(guide)
+fn rule_matches_path(rule: &AreaRule, path: &str) -> bool {
+    rule.exact_paths.iter().any(|exact| exact == path)
+        || rule.path_prefixes.iter().any(|prefix| path.starts_with(prefix))
 }
 
 fn impact(base: &str) -> AppResult<ImpactReport> {
     let repo = root()?;
     let changed = changed_paths(&repo, Some(base))?;
     let metadata = cargo_metadata(&repo)?;
-    let mut changed_packages = BTreeSet::new();
+    let mut direct_changed_packages = BTreeSet::new();
     let mut package_by_path = BTreeMap::new();
     for package in &metadata.packages {
         let manifest = PathBuf::from(&package.manifest_path);
@@ -508,10 +740,16 @@ fn impact(base: &str) -> AppResult<ImpactReport> {
             .to_string_lossy()
             .replace('\\', "/");
         package_by_path.insert(relative.clone(), package.name.clone());
+        let manifest_relative = manifest
+            .strip_prefix(&repo)
+            .unwrap_or(&manifest)
+            .to_string_lossy()
+            .replace('\\', "/");
         if changed.iter().any(|path| {
-            path == &package.manifest_path || path.starts_with(&format!("{relative}/"))
+            path == &manifest_relative
+                || (!relative.is_empty() && path.starts_with(&format!("{relative}/")))
         }) {
-            changed_packages.insert(package.name.clone());
+            direct_changed_packages.insert(package.name.clone());
         }
     }
     let mut reverse = BTreeMap::<String, BTreeSet<String>>::new();
@@ -530,53 +768,56 @@ fn impact(base: &str) -> AppResult<ImpactReport> {
             }
         }
     }
-    let direct: Vec<String> = changed_packages.iter().cloned().collect();
-    let mut affected = changed_packages.clone();
-    let mut queue = direct.clone();
+    let mut affected = direct_changed_packages.clone();
+    let mut reverse_dependencies = BTreeMap::new();
+    for package in &direct_changed_packages {
+        let dependents = transitive_dependents(package, &reverse);
+        affected.extend(dependents.iter().cloned());
+        reverse_dependencies.insert(package.clone(), dependents.into_iter().collect());
+    }
+    let scoped =
+        context(&ContextArgs { paths: changed.iter().map(PathBuf::from).collect() })?;
+    let invariant_ids =
+        scoped.invariants.iter().map(|record| record.id.clone()).collect();
+    let base_sha = require_success(
+        run_command("git", ["merge-base", base, "HEAD"], Some(&repo))?,
+        "git merge-base",
+    )?
+    .trim()
+    .to_owned();
+    let head_sha = require_success(
+        run_command("git", ["rev-parse", "HEAD"], Some(&repo))?,
+        "git rev-parse",
+    )?
+    .trim()
+    .to_owned();
+    Ok(ImpactReport {
+        base: base.to_owned(),
+        base_sha,
+        head_sha,
+        changed_paths: changed,
+        changed_packages: affected.into_iter().collect(),
+        reverse_dependencies,
+        scoped_guides: scoped.guides,
+        invariant_ids,
+    })
+}
+
+fn transitive_dependents(
+    package: &str,
+    reverse: &BTreeMap<String, BTreeSet<String>>,
+) -> BTreeSet<String> {
+    let mut dependents = BTreeSet::new();
+    let mut queue = vec![package.to_owned()];
     while let Some(name) = queue.pop() {
         for dependent in reverse.get(&name).into_iter().flatten() {
-            if affected.insert(dependent.clone()) {
+            if dependents.insert(dependent.clone()) {
                 queue.push(dependent.clone());
             }
         }
     }
-    let reverse_dependencies = reverse
-        .into_iter()
-        .map(|(key, values)| (key, values.into_iter().collect()))
-        .collect();
-    let scoped =
-        context(&ContextArgs { paths: changed.iter().map(PathBuf::from).collect() })?;
-    let scoped_guides = scoped
-        .get("guides")
-        .cloned()
-        .and_then(|v| serde_json::from_value(v).ok())
-        .unwrap_or_default();
-    let invariant_ids = scoped
-        .get("invariants")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| {
-                    item.get("id").and_then(Value::as_str).map(str::to_owned)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    Ok(ImpactReport {
-        base: base.to_owned(),
-        head: require_success(
-            run_command("git", ["rev-parse", "HEAD"], Some(&repo))?,
-            "git rev-parse",
-        )?
-        .trim()
-        .to_owned(),
-        changed_paths: changed,
-        changed_packages: affected.into_iter().collect(),
-        reverse_dependencies,
-        scoped_guides,
-        invariant_ids,
-    })
+    dependents.remove(package);
+    dependents
 }
 
 fn cargo_metadata(repo: &Path) -> AppResult<CargoMetadata> {
@@ -590,63 +831,206 @@ fn cargo_metadata(repo: &Path) -> AppResult<CargoMetadata> {
         .map_err(|error| AppError::authority(format!("invalid cargo metadata: {error}")))
 }
 
-fn policy_check() -> AppResult<Value> {
+fn policy_check() -> AppResult<PolicyReport> {
     let repo = root()?;
     let mut violations = Vec::new();
     let push_url =
         run_command("git", ["remote", "get-url", "--push", "upstream"], Some(&repo))?;
     let push_url = push_url.stdout.trim().to_string();
     if push_url.is_empty() || push_url.contains("github.com/typst/typst") {
-        violations.push("upstream has a writable or missing push URL".to_string());
+        violations.push(PolicyViolation {
+            code: "upstream-push-url".into(),
+            path: ".git/config".into(),
+            detail: "upstream has a writable or missing push URL".into(),
+        });
+    }
+    let remotes =
+        require_success(run_command("git", ["remote"], Some(&repo))?, "git remote")?;
+    for remote in remotes.lines().map(str::trim).filter(|name| !name.is_empty()) {
+        let remote_push = require_success(
+            run_command("git", ["remote", "get-url", "--push", remote], Some(&repo))?,
+            "remote push URL",
+        )?;
+        if remote_push.contains("github.com/typst/typst") {
+            violations.push(PolicyViolation {
+                code: "upstream-write-remote".into(),
+                path: ".git/config".into(),
+                detail: format!("remote {remote} can write to the upstream repository"),
+            });
+        }
     }
     let files =
         run_command("git", ["ls-files", "-co", "--exclude-standard"], Some(&repo))?;
-    for path in files.stdout.lines().map(str::trim).filter(|path| !path.is_empty()) {
+    let files = require_success(files, "tracked and untracked file inventory")?;
+    let mut inspected_files = 0;
+    for raw_path in files.lines().map(str::trim).filter(|path| !path.is_empty()) {
+        let path = normalize_repo_path(raw_path)?;
         if path.starts_with(".git/")
             || path.starts_with("target/")
             || path.starts_with(".tmp/")
             || path.contains("node_modules/")
+            || is_binary_evidence_path(&path)
         {
             continue;
         }
-        let full = repo.join(path);
-        let Ok(bytes) = fs::read(&full) else { continue };
+        let full = repo.join(&path);
+        if !full.is_file() {
+            continue;
+        }
+        let metadata = fs::metadata(&full).map_err(|error| {
+            AppError::authority(format!("cannot inspect {path}: {error}"))
+        })?;
+        if metadata.len() > MAX_SEMANTIC_EVIDENCE_BYTES {
+            return Err(AppError::authority(format!(
+                "semantic policy evidence exceeds {MAX_SEMANTIC_EVIDENCE_BYTES} bytes: {path}"
+            )));
+        }
+        let bytes = fs::read(&full).map_err(|error| {
+            AppError::authority(format!("cannot read policy evidence {path}: {error}"))
+        })?;
         if bytes.contains(&0) {
             continue;
         }
-        let text = String::from_utf8_lossy(&bytes);
-        let private_key_marker = ["-----BEGIN ", "PRIVATE KEY-----"].concat();
-        let github_token_marker = ["g", "ho_"].concat();
-        let openai_marker = ["s", "k-"].concat();
-        let aws_marker = ["AK", "IA"].concat();
-        let slack_marker = ["xox", "b-"].concat();
-        let secret = text.contains(&private_key_marker)
-            || contains_token(&text, &github_token_marker, 20)
-            || contains_token(&text, &openai_marker, 20)
-            || contains_token(&text, &aws_marker, 16)
-            || contains_token(&text, &slack_marker, 20);
-        if secret {
-            violations.push(format!("possible credential in {path}"));
+        let Ok(text) = std::str::from_utf8(&bytes) else { continue };
+        inspected_files += 1;
+        if contains_credential_shape(text) {
+            violations.push(PolicyViolation {
+                code: "credential-shaped-content".into(),
+                path: path.clone(),
+                detail: "possible credential content was redacted".into(),
+            });
         }
-        let upstream_push_marker =
-            ["git push https://github.com/", "typst/typst"].concat();
-        let upstream_ssh_marker = ["git@github.com:", "typst/typst"].concat();
-        if text.contains(&upstream_push_marker) || text.contains(&upstream_ssh_marker) {
-            violations.push(format!("upstream publication command in {path}"));
+        if contains_upstream_write(text) {
+            violations.push(PolicyViolation {
+                code: "upstream-write-operation".into(),
+                path: path.clone(),
+                detail: "push or API operation targets typst/typst".into(),
+            });
+        }
+        if is_runtime_path(&path) && contains_model_runtime(text, &path) {
+            violations.push(PolicyViolation {
+                code: "model-runtime-dependency".into(),
+                path,
+                detail:
+                    "compiler/runtime contains an agent, MCP, model, or LLM integration"
+                        .into(),
+            });
         }
     }
     let required = ["AI_DISCLOSURE.md", "TRADEMARKS.md", "DCO", ".github/CODEOWNERS"];
     for path in required {
         if !repo.join(path).is_file() {
-            violations.push(format!("missing {path}"));
+            violations.push(PolicyViolation {
+                code: "missing-governance-file".into(),
+                path: path.into(),
+                detail: "required governance authority is missing".into(),
+            });
         }
     }
     if !violations.is_empty() {
-        return Err(AppError::policy(violations.join("; ")));
+        let summary = violations
+            .iter()
+            .map(|violation| {
+                format!("{} in {}: {}", violation.code, violation.path, violation.detail)
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(AppError::policy(bounded(summary)));
     }
-    Ok(
-        json!({"violations": [], "upstream_push_url": push_url, "checked": "tracked-and-untracked-files"}),
+    Ok(PolicyReport {
+        checked: "tracked-and-untracked-files",
+        inspected_files,
+        upstream_push_url: push_url,
+        violations,
+    })
+}
+
+fn is_binary_evidence_path(path: &str) -> bool {
+    matches!(
+        Path::new(path)
+            .extension()
+            .and_then(OsStr::to_str)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some(
+            "7z" | "avif"
+                | "bin"
+                | "bmp"
+                | "bz2"
+                | "gif"
+                | "gz"
+                | "ico"
+                | "jpeg"
+                | "jpg"
+                | "otf"
+                | "pdf"
+                | "png"
+                | "tar"
+                | "ttf"
+                | "wasm"
+                | "webp"
+                | "woff"
+                | "woff2"
+                | "xz"
+                | "zip"
+        )
     )
+}
+
+fn contains_credential_shape(text: &str) -> bool {
+    let private_key_marker = ["-----BEGIN ", "PRIVATE KEY-----"].concat();
+    let github_token_marker = ["g", "ho_"].concat();
+    let openai_marker = ["s", "k-"].concat();
+    let aws_marker = ["AK", "IA"].concat();
+    let slack_marker = ["xox", "b-"].concat();
+    text.contains(&private_key_marker)
+        || contains_token(text, &github_token_marker, 20)
+        || contains_token(text, &openai_marker, 20)
+        || contains_token(text, &aws_marker, 16)
+        || contains_token(text, &slack_marker, 20)
+}
+
+fn contains_upstream_write(text: &str) -> bool {
+    let markers = [
+        ["git push ", "upstream"].concat(),
+        ["git push https://github.com/", "typst/typst"].concat(),
+        ["git push git@github.com:", "typst/typst"].concat(),
+        ["gh api repos/", "typst/typst"].concat(),
+        ["api.github.com/repos/", "typst/typst"].concat(),
+    ];
+    markers.iter().any(|marker| text.contains(marker))
+}
+
+fn is_runtime_path(path: &str) -> bool {
+    path.starts_with("crates/") && !path.starts_with("crates/typst-agent-dev/")
+}
+
+fn contains_model_runtime(text: &str, path: &str) -> bool {
+    if path.ends_with("Cargo.toml") {
+        let dependencies = [
+            ["async", "-openai"].concat(),
+            ["anthropic", "-sdk"].concat(),
+            ["mcp", "-client"].concat(),
+            ["ollama", "-rs"].concat(),
+            ["rig", "-core"].concat(),
+            ["ll", "m"].concat(),
+        ];
+        if dependencies.iter().any(|dependency| {
+            text.lines().any(|line| {
+                let trimmed = line.trim_start();
+                trimmed.starts_with(dependency)
+                    && trimmed[dependency.len()..].trim_start().starts_with('=')
+            })
+        }) {
+            return true;
+        }
+    }
+    let endpoints = [
+        ["api.", "openai.com"].concat(),
+        ["api.", "anthropic.com"].concat(),
+        ["mcp", "://"].concat(),
+    ];
+    endpoints.iter().any(|endpoint| text.contains(endpoint))
 }
 
 fn contains_token(text: &str, marker: &str, minimum_suffix: usize) -> bool {
@@ -813,7 +1197,7 @@ fn eval() -> AppResult<Value> {
         .and_then(|k| k.get("enum"))
         .and_then(Value::as_array)
         .map_or(0, Vec::len);
-    if kinds < 8 || context.get("guides").and_then(Value::as_array).is_none() {
+    if kinds != 8 || context.guides.is_empty() {
         return Err(AppError::verification(
             "control-plane self-check did not find the contract or scoped guide",
         ));
@@ -885,26 +1269,88 @@ mod tests {
     fn token_detector_requires_a_boundary_and_length() {
         assert!(!contains_token("task-owned", "sk-", 20));
         assert!(!contains_token("sk-short", "sk-", 20));
-        assert!(contains_token("sk-12345678901234567890", "sk-", 20));
-        assert!(!contains_token("ask-12345678901234567890", "sk-", 20));
+        let token = ["s", "k-12345678901234567890"].concat();
+        assert!(contains_token(&token, &["s", "k-"].concat(), 20));
+        let embedded = ["a", &token].concat();
+        assert!(!contains_token(&embedded, &["s", "k-"].concat(), 20));
     }
 
     #[test]
-    fn path_rules_select_the_narrowest_guidance() {
+    fn context_paths_reject_absolute_and_parent_components() {
+        assert!(normalize_repo_path("/tmp/outside").is_err());
+        assert!(normalize_repo_path("../outside").is_err());
+        assert!(normalize_repo_path("crate/../../outside").is_err());
+        assert!(normalize_repo_path("C:\\outside").is_err());
         assert_eq!(
-            guide_for_path("crates/typst-syntax/src/parser.rs"),
-            Some(".agents/areas/parser-spans.md")
+            normalize_repo_path("./crates/typst-syntax/src/lib.rs").unwrap(),
+            "crates/typst-syntax/src/lib.rs"
         );
+    }
+
+    #[test]
+    fn area_rule_matches_only_declared_paths() {
+        let rule = AreaRule {
+            id: "syntax".into(),
+            path_prefixes: vec!["crates/typst-syntax/".into()],
+            exact_paths: vec!["Cargo.toml".into()],
+            authority_sources: vec!["crates/typst-syntax/src/".into()],
+            guide: ".agents/areas/parser-spans.md".into(),
+            required_checks: vec!["cargo test -p typst-syntax".into()],
+            invariant_ids: vec!["syntax-parse-total".into()],
+        };
+        assert!(rule_matches_path(&rule, "crates/typst-syntax/src/lib.rs"));
+        assert!(rule_matches_path(&rule, "Cargo.toml"));
+        assert!(!rule_matches_path(&rule, "crates/typst-cli/src/main.rs"));
+    }
+
+    #[test]
+    fn invariant_records_reject_unknown_fields() {
+        let record = "
+id: test
+scope: tests
+statement: statement
+rationale: rationale
+authority_source: tests/src/tests.rs
+required_checks: [test]
+review_prompts: [review]
+upstream_anchor: v0.15.1
+upstream_sha: a51e028041cac426f97d34335bb01d8f1d8e5e8f
+unexpected: rejected
+";
+        assert!(serde_yaml::from_str::<InvariantRecord>(record).is_err());
+    }
+
+    #[test]
+    fn reverse_dependencies_are_transitive() {
+        let reverse = BTreeMap::from([
+            ("syntax".into(), BTreeSet::from(["eval".into(), "ide".into()])),
+            ("eval".into(), BTreeSet::from(["compiler".into()])),
+            ("compiler".into(), BTreeSet::from(["cli".into()])),
+        ]);
         assert_eq!(
-            guide_for_path("crates/typst-cli/src/main.rs"),
-            Some(".agents/areas/cli.md")
+            transitive_dependents("syntax", &reverse),
+            BTreeSet::from([
+                "cli".into(),
+                "compiler".into(),
+                "eval".into(),
+                "ide".into(),
+            ])
         );
-        assert_eq!(guide_for_path("unknown/file.txt"), None);
+    }
+
+    #[test]
+    fn upstream_operations_are_detected_without_echoing_credentials() {
+        let push = ["git push ", "upstream HEAD:main"].concat();
+        let api = ["gh api repos/", "typst/typst/hooks"].concat();
+        assert!(contains_upstream_write(&push));
+        assert!(contains_upstream_write(&api));
+        let secret = ["g", "ho_123456789012345678901234"].concat();
+        assert!(contains_credential_shape(&secret));
     }
 
     #[test]
     fn output_is_bounded() {
-        let output = bounded("x".repeat(MAX_OUTPUT_BYTES + 4));
+        let output = bounded(format!("{}é", "x".repeat(MAX_OUTPUT_BYTES - 1)));
         assert!(output.len() <= MAX_OUTPUT_BYTES + "\n[output truncated]".len());
         assert!(output.ends_with("[output truncated]"));
     }

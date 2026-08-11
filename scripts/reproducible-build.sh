@@ -28,6 +28,14 @@ downstream_sha="$(git rev-parse HEAD)"
 export SOURCE_DATE_EPOCH="$source_date_epoch"
 export TYPST_AGENT_COMMIT_SHA="$downstream_sha"
 
+# MSVC's linker otherwise writes time-dependent data into the PE image. Rust's
+# own reproducible-build test uses /Brepro for Windows MSVC targets for the same
+# reason. The target directory is deleted between builds below, which also
+# removes the PDB that link.exe must not reuse.
+if [[ "$target" == *-pc-windows-msvc ]]; then
+  export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-Clink-arg=/Brepro"
+fi
+
 build_once() {
   local target_dir="$1"
   CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$target_dir" \

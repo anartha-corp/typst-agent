@@ -23,7 +23,7 @@
       "Miri",
       "DCO sign-off",
       "Dependency review",
-      "Analyze Rust / Analyze"
+      "Analyze Rust"
     ]
   },
   "required_pull_request_reviews": {

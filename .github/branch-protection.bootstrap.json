@@ -2,12 +2,9 @@
   "required_status_checks": {
     "strict": true,
     "contexts": [
-      "Tests",
-      "Check clippy, formatting, and crate docs",
-      "Check documentation (website and PDF)",
-      "Check minimum Rust version",
-      "Check fuzzers",
-      "Check unsafe code",
+      "Policy and agent PR lane",
+      "Reference evidence",
+      "DCO sign-off",
       "Human owner approval"
     ]
   },

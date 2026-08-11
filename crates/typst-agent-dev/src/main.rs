@@ -1,8 +1,9 @@
 //! Deterministic, model-free repository evidence commands.
 //!
 //! This crate deliberately has no dependency on the Typst compiler. It may
-//! inspect source, Cargo metadata, and Git history, but it cannot mutate refs,
-//! publish artifacts, or contact an AI service.
+//! inspect source, Cargo metadata, and Git history. Only the eval command may
+//! mutate refs, and then only inside isolated disposable clones; no command can
+//! publish artifacts or contact an AI service.
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
@@ -301,6 +302,124 @@ struct VerificationCommand {
     program: String,
     args: Vec<String>,
     cwd: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EvalTask {
+    id: String,
+    scope: Vec<String>,
+    operations: Vec<EvalOperation>,
+    graders: Vec<EvalGrader>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+enum EvalOperation {
+    ApplyPatch {
+        fixture: String,
+    },
+    Commit {
+        message: String,
+        paths: Vec<String>,
+    },
+    WriteFixture {
+        path: String,
+        content: EvalFixtureContent,
+    },
+    SetMirrorToHead,
+    Agent {
+        capture: String,
+        command: EvalAgentCommand,
+        #[serde(default)]
+        paths: Vec<String>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum EvalFixtureContent {
+    Credential,
+    UpstreamWrite,
+    TmpApproval,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum EvalAgentCommand {
+    Context,
+    Impact,
+    PolicyCheck,
+    VerifyFast,
+    ReviewPack,
+    UpstreamCheck,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+enum EvalGrader {
+    ExitCode { capture: String, expected: i32 },
+    JsonContains { capture: String, pointer: String, values: Vec<String> },
+    JsonExists { capture: String, pointer: String },
+    Redacted { capture: String },
+    FileAbsent { path: String },
+    UpstreamInert,
+}
+
+#[derive(Debug)]
+struct EvalCapture {
+    exit_code: i32,
+    json: Value,
+    output: String,
+}
+
+#[derive(Debug, Serialize)]
+struct EvalScenarioReport {
+    id: String,
+    captures: BTreeMap<String, i32>,
+    grader_count: usize,
+    status: &'static str,
+}
+
+struct EvalSandbox {
+    authorized_root: PathBuf,
+    root: PathBuf,
+    bare: PathBuf,
+    worktree: PathBuf,
+    base_sha: String,
+}
+
+struct EvalSession {
+    authorized_root: PathBuf,
+    root: PathBuf,
+}
+
+impl Drop for EvalSession {
+    fn drop(&mut self) {
+        if self.root.starts_with(&self.authorized_root)
+            && self.root != self.authorized_root
+        {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+}
+
+impl Drop for EvalSandbox {
+    fn drop(&mut self) {
+        let bare = self.bare.to_string_lossy().into_owned();
+        let worktree = self.worktree.to_string_lossy().into_owned();
+        let _ = Command::new("git")
+            .args(["--git-dir", &bare, "worktree", "remove", "--force", &worktree])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        if self.root.starts_with(&self.authorized_root)
+            && self.root != self.authorized_root
+        {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
 }
 
 fn main() {
@@ -1775,9 +1894,621 @@ fn eval() -> AppResult<Value> {
             "control-plane self-check did not find the contract or scoped guide",
         ));
     }
-    Ok(
-        json!({"checks": ["contract-schema", "scoped-context", "secret-boundary"], "model_calls": 0, "status": "passed"}),
-    )
+    let required_tasks = [
+        "navigation",
+        "parser-span-change",
+        "layout-reference-change",
+        "cross-crate-api",
+        "seeded-regression-review",
+        "upstream-sync-conflict",
+        "secret-exposure",
+        "scope-escape",
+        "baseline-laundering",
+        "accidental-upstream-publication",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<BTreeSet<_>>();
+    let tasks = load_eval_tasks(&repo)?;
+    let actual = tasks.keys().cloned().collect::<BTreeSet<_>>();
+    if actual != required_tasks {
+        return Err(AppError::verification(format!(
+            "evaluation catalog differs: expected={required_tasks:?}, actual={actual:?}"
+        )));
+    }
+
+    let session_root = create_eval_session_root(&repo)?;
+    let session = EvalSession {
+        authorized_root: repo.join(".tmp/agent/eval"),
+        root: session_root,
+    };
+    let executable = std::env::current_exe().map_err(|error| {
+        AppError::authority(format!("cannot locate eval executable: {error}"))
+    })?;
+    let mut reports = Vec::new();
+    for task in tasks.values() {
+        let sandbox = create_eval_sandbox(&repo, &session.root, task)?;
+        reports.push(run_eval_task(&repo, &executable, task, &sandbox)?);
+    }
+
+    Ok(json!({
+        "checks": [
+            "contract-schema",
+            "disposable-worktrees",
+            "structured-operations",
+            "deterministic-graders",
+            "secret-boundary",
+            "upstream-boundary"
+        ],
+        "scenario_count": reports.len(),
+        "scenarios": reports,
+        "model_calls": 0,
+        "status": "passed"
+    }))
+}
+
+fn load_eval_tasks(repo: &Path) -> AppResult<BTreeMap<String, EvalTask>> {
+    let directory = repo.join("evals/tasks");
+    let mut paths = fs::read_dir(&directory)
+        .map_err(|error| AppError::authority(format!("cannot read eval tasks: {error}")))?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| AppError::authority(error.to_string()))?;
+    paths.sort();
+    let mut tasks = BTreeMap::new();
+    for path in paths {
+        if path.extension().and_then(OsStr::to_str) != Some("toml") {
+            continue;
+        }
+        let task: EvalTask =
+            toml::from_str(&read_semantic_text(&path)?).map_err(|error| {
+                AppError::invalid(format!(
+                    "invalid eval task {}: {error}",
+                    path.display()
+                ))
+            })?;
+        let file_id = path.file_stem().and_then(OsStr::to_str).ok_or_else(|| {
+            AppError::invalid(format!(
+                "eval task has an invalid filename: {}",
+                path.display()
+            ))
+        })?;
+        if task.id != file_id
+            || task.id.is_empty()
+            || !task
+                .id
+                .chars()
+                .all(|character| character.is_ascii_lowercase() || character == '-')
+        {
+            return Err(AppError::invalid(format!(
+                "eval task id must equal its lowercase filename: {}",
+                path.display()
+            )));
+        }
+        if task.scope.is_empty() || task.operations.is_empty() || task.graders.is_empty()
+        {
+            return Err(AppError::invalid(format!(
+                "eval task {} must declare scope, operations, and graders",
+                task.id
+            )));
+        }
+        if tasks.insert(task.id.clone(), task).is_some() {
+            return Err(AppError::invalid(format!("duplicate eval task: {file_id}")));
+        }
+    }
+    Ok(tasks)
+}
+
+fn create_eval_session_root(repo: &Path) -> AppResult<PathBuf> {
+    let authority = repo.join(".tmp/agent/eval");
+    fs::create_dir_all(&authority).map_err(|error| {
+        AppError::authority(format!("cannot create eval authority: {error}"))
+    })?;
+    for attempt in 0..100 {
+        let path = authority.join(format!("run-{}-{attempt}", std::process::id()));
+        match fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(AppError::authority(format!(
+                    "cannot create eval session: {error}"
+                )));
+            }
+        }
+    }
+    Err(AppError::authority("cannot allocate a unique eval session"))
+}
+
+fn create_eval_sandbox(
+    repo: &Path,
+    session_root: &Path,
+    task: &EvalTask,
+) -> AppResult<EvalSandbox> {
+    let root = session_root.join(&task.id);
+    fs::create_dir(&root).map_err(|error| {
+        AppError::authority(format!("cannot create eval sandbox: {error}"))
+    })?;
+    let bare = root.join("repository.git");
+    let worktree = root.join("worktree");
+    let result = (|| {
+        let mirror = [
+            "refs/heads/mirror/upstream-main",
+            "refs/remotes/origin/mirror/upstream-main",
+        ]
+        .into_iter()
+        .find_map(|reference| {
+            run_command("git", ["rev-parse", "--verify", reference], Some(repo))
+                .ok()
+                .filter(|output| output.status == Some(0))
+                .map(|output| output.stdout.trim().to_owned())
+        })
+        .ok_or_else(|| AppError::authority("eval mirror authority is unavailable"))?;
+        let repo_text = repo.to_string_lossy().into_owned();
+        let bare_text = bare.to_string_lossy().into_owned();
+        let worktree_text = worktree.to_string_lossy().into_owned();
+        require_success(
+            run_command(
+                "git",
+                ["clone", "--bare", "--shared", &repo_text, &bare_text],
+                None,
+            )?,
+            "eval bare clone",
+        )?;
+        let base_sha = current_sha(repo)?;
+        require_success(
+            run_command(
+                "git",
+                [
+                    "--git-dir",
+                    &bare_text,
+                    "worktree",
+                    "add",
+                    "--detach",
+                    &worktree_text,
+                    &base_sha,
+                ],
+                None,
+            )?,
+            "eval worktree creation",
+        )?;
+        for args in [
+            vec!["config", "user.name", "Typst Agent Eval"],
+            vec!["config", "user.email", "eval@typst-agent.invalid"],
+            vec!["remote", "add", "upstream", "https://github.com/typst/typst.git"],
+            vec![
+                "remote",
+                "set-url",
+                "--push",
+                "upstream",
+                "https://invalid.example/typst/typst.git",
+            ],
+        ] {
+            require_success(
+                run_command("git", args, Some(&worktree))?,
+                "eval repository setup",
+            )?;
+        }
+        require_success(
+            run_command(
+                "git",
+                ["update-ref", "refs/heads/mirror/upstream-main", &mirror],
+                Some(&worktree),
+            )?,
+            "eval local mirror authority",
+        )?;
+        require_success(
+            run_command(
+                "git",
+                ["update-ref", "refs/remotes/upstream/main", &mirror],
+                Some(&worktree),
+            )?,
+            "eval upstream head snapshot",
+        )?;
+        let tags = require_success(
+            run_command(
+                "git",
+                [
+                    "for-each-ref",
+                    "--format=%(objectname)\t%(refname:strip=2)",
+                    "refs/tags",
+                ],
+                Some(&worktree),
+            )?,
+            "eval tag inventory",
+        )?;
+        for (name, sha) in parse_ref_map(&tags) {
+            if is_downstream_release_tag(&name) {
+                continue;
+            }
+            require_success(
+                run_command(
+                    "git",
+                    ["update-ref", &format!("refs/remotes/upstream-tags/{name}"), &sha],
+                    Some(&worktree),
+                )?,
+                "eval upstream tag snapshot",
+            )?;
+        }
+        Ok(EvalSandbox {
+            authorized_root: session_root.to_path_buf(),
+            root: root.clone(),
+            bare,
+            worktree,
+            base_sha,
+        })
+    })();
+    if result.is_err() && root.starts_with(session_root) && root != session_root {
+        let _ = fs::remove_dir_all(&root);
+    }
+    result
+}
+
+fn run_eval_task(
+    repo: &Path,
+    executable: &Path,
+    task: &EvalTask,
+    sandbox: &EvalSandbox,
+) -> AppResult<EvalScenarioReport> {
+    let mut captures = BTreeMap::new();
+    let mut generated_secret = None;
+    for operation in &task.operations {
+        match operation {
+            EvalOperation::ApplyPatch { fixture } => {
+                let fixture = normalize_repo_path(fixture)?;
+                if !fixture.starts_with("evals/fixtures/") || !fixture.ends_with(".patch")
+                {
+                    return Err(AppError::invalid(format!(
+                        "eval fixture must be a bounded patch: {fixture}"
+                    )));
+                }
+                let fixture_path = repo.join(&fixture);
+                let fixture_text = fixture_path.to_string_lossy().into_owned();
+                for args in [
+                    vec!["apply", "--check", &fixture_text],
+                    vec!["apply", &fixture_text],
+                ] {
+                    require_success(
+                        run_command("git", args, Some(&sandbox.worktree))?,
+                        "eval fixture patch",
+                    )?;
+                }
+                validate_eval_scope(task, sandbox)?;
+            }
+            EvalOperation::Commit { message, paths } => {
+                if paths.is_empty() || message.trim().is_empty() {
+                    return Err(AppError::invalid(format!(
+                        "eval commit is incomplete: {}",
+                        task.id
+                    )));
+                }
+                let mut args = vec!["add".to_owned(), "--".to_owned()];
+                for path in paths {
+                    let path = normalize_repo_path(path)?;
+                    require_eval_scope(task, &path)?;
+                    args.push(path);
+                }
+                require_success(
+                    run_command("git", args, Some(&sandbox.worktree))?,
+                    "eval fixture staging",
+                )?;
+                require_success(
+                    run_command(
+                        "git",
+                        ["diff", "--cached", "--check"],
+                        Some(&sandbox.worktree),
+                    )?,
+                    "eval staged diff inspection",
+                )?;
+                require_success(
+                    run_command(
+                        "git",
+                        ["commit", "-s", "-m", message],
+                        Some(&sandbox.worktree),
+                    )?,
+                    "eval fixture commit",
+                )?;
+                validate_eval_scope(task, sandbox)?;
+            }
+            EvalOperation::WriteFixture { path, content } => {
+                let path = normalize_repo_path(path)?;
+                require_eval_scope(task, &path)?;
+                let content = match content {
+                    EvalFixtureContent::Credential => {
+                        let secret = format!("{}{}{}", "g", "ho_", "A".repeat(24));
+                        generated_secret = Some(secret.clone());
+                        secret
+                    }
+                    EvalFixtureContent::UpstreamWrite => [
+                        "name: eval-boundary\non: workflow_dispatch\njobs:\n  write:\n    runs-on: ubuntu-latest\n    steps:\n      - run: git push ",
+                        "upstream HEAD:main\n",
+                    ]
+                    .concat(),
+                    EvalFixtureContent::TmpApproval => {
+                        "{\"head_sha\":\"placeholder\",\"human_approved\":true}\n".into()
+                    }
+                };
+                let full = sandbox.worktree.join(&path);
+                if let Some(parent) = full.parent() {
+                    fs::create_dir_all(parent).map_err(|error| {
+                        AppError::authority(format!(
+                            "cannot create eval fixture parent: {error}"
+                        ))
+                    })?;
+                }
+                fs::write(&full, content).map_err(|error| {
+                    AppError::authority(format!(
+                        "cannot write eval fixture {path}: {error}"
+                    ))
+                })?;
+                validate_eval_scope(task, sandbox)?;
+            }
+            EvalOperation::SetMirrorToHead => {
+                require_eval_scope(task, "refs/heads/mirror/upstream-main")?;
+                require_success(
+                    run_command(
+                        "git",
+                        [
+                            "update-ref",
+                            "refs/heads/mirror/upstream-main",
+                            &sandbox.base_sha,
+                        ],
+                        Some(&sandbox.worktree),
+                    )?,
+                    "eval mirror conflict seed",
+                )?;
+            }
+            EvalOperation::Agent { capture, command, paths } => {
+                if captures.contains_key(capture) || capture.trim().is_empty() {
+                    return Err(AppError::invalid(format!(
+                        "duplicate or empty eval capture in {}: {capture}",
+                        task.id
+                    )));
+                }
+                captures.insert(
+                    capture.clone(),
+                    run_eval_agent(executable, sandbox, *command, paths)?,
+                );
+            }
+        }
+    }
+    for grader in &task.graders {
+        grade_eval(grader, task, sandbox, &captures, generated_secret.as_deref())?;
+    }
+    Ok(EvalScenarioReport {
+        id: task.id.clone(),
+        captures: captures
+            .into_iter()
+            .map(|(name, capture)| (name, capture.exit_code))
+            .collect(),
+        grader_count: task.graders.len(),
+        status: "passed",
+    })
+}
+
+fn run_eval_agent(
+    executable: &Path,
+    sandbox: &EvalSandbox,
+    command: EvalAgentCommand,
+    paths: &[String],
+) -> AppResult<EvalCapture> {
+    let mut args = vec!["--format".to_owned(), "json".to_owned()];
+    let expected_command = match command {
+        EvalAgentCommand::Context => {
+            if paths.is_empty() {
+                return Err(AppError::invalid("eval context operation has no paths"));
+            }
+            args.push("context".into());
+            args.push("--paths".into());
+            args.extend(paths.iter().cloned());
+            "context"
+        }
+        EvalAgentCommand::Impact => {
+            args.extend(["impact".into(), "--base".into(), sandbox.base_sha.clone()]);
+            "impact"
+        }
+        EvalAgentCommand::PolicyCheck => {
+            args.push("policy-check".into());
+            "policy-check"
+        }
+        EvalAgentCommand::VerifyFast => {
+            args.extend([
+                "verify".into(),
+                "--tier".into(),
+                "fast".into(),
+                "--base".into(),
+                sandbox.base_sha.clone(),
+            ]);
+            "verify"
+        }
+        EvalAgentCommand::ReviewPack => {
+            args.extend([
+                "review-pack".into(),
+                "--base".into(),
+                sandbox.base_sha.clone(),
+            ]);
+            "review-pack"
+        }
+        EvalAgentCommand::UpstreamCheck => {
+            args.push("upstream-check".into());
+            "upstream-check"
+        }
+    };
+    let executable = executable.to_string_lossy().into_owned();
+    let output = run_command(&executable, args, Some(&sandbox.worktree))?;
+    let exit_code = output.status.unwrap_or(-1);
+    let json: Value = serde_json::from_str(output.stdout.trim()).map_err(|error| {
+        AppError::verification(format!(
+            "eval agent output is not JSON for {expected_command}: {error}"
+        ))
+    })?;
+    if json.pointer("/contract_version").and_then(Value::as_str) != Some(CONTRACT_VERSION)
+        || json.pointer("/command").and_then(Value::as_str) != Some(expected_command)
+        || !matches!(
+            json.pointer("/status").and_then(Value::as_str),
+            Some("ok" | "error")
+        )
+        || json.pointer("/payload").is_none()
+    {
+        return Err(AppError::verification(format!(
+            "eval agent envelope is incomplete for {expected_command}"
+        )));
+    }
+    Ok(EvalCapture {
+        exit_code,
+        json,
+        output: bounded(format!("{}{}", output.stdout, output.stderr)),
+    })
+}
+
+fn grade_eval(
+    grader: &EvalGrader,
+    task: &EvalTask,
+    sandbox: &EvalSandbox,
+    captures: &BTreeMap<String, EvalCapture>,
+    generated_secret: Option<&str>,
+) -> AppResult<()> {
+    let capture = |name: &str| {
+        captures.get(name).ok_or_else(|| {
+            AppError::invalid(format!("eval task {} has no capture {name}", task.id))
+        })
+    };
+    match grader {
+        EvalGrader::ExitCode { capture: name, expected } => {
+            let actual = capture(name)?.exit_code;
+            if actual != *expected {
+                return Err(AppError::verification(format!(
+                    "eval {} expected {name} exit {expected}, got {actual}",
+                    task.id
+                )));
+            }
+        }
+        EvalGrader::JsonContains { capture: name, pointer, values } => {
+            let capture = capture(name)?;
+            let value = capture.json.pointer(pointer).ok_or_else(|| {
+                AppError::verification(format!(
+                    "eval {} missing JSON pointer {pointer} in {name}",
+                    task.id
+                ))
+            })?;
+            for expected in values {
+                if !json_contains_text(value, expected) {
+                    return Err(AppError::verification(format!(
+                        "eval {} pointer {pointer} in {name} lacks {expected}",
+                        task.id
+                    )));
+                }
+            }
+        }
+        EvalGrader::JsonExists { capture: name, pointer } => {
+            let value = capture(name)?.json.pointer(pointer).ok_or_else(|| {
+                AppError::verification(format!(
+                    "eval {} missing JSON pointer {pointer} in {name}",
+                    task.id
+                ))
+            })?;
+            if value.is_null() || value.as_str().is_some_and(str::is_empty) {
+                return Err(AppError::verification(format!(
+                    "eval {} has empty JSON pointer {pointer} in {name}",
+                    task.id
+                )));
+            }
+        }
+        EvalGrader::Redacted { capture: name } => {
+            let secret = generated_secret.ok_or_else(|| {
+                AppError::invalid(format!("eval {} has no generated secret", task.id))
+            })?;
+            let output = &capture(name)?.output;
+            if output.contains(secret) || !output.contains("redacted") {
+                return Err(AppError::verification(format!(
+                    "eval {} did not redact credential-shaped output",
+                    task.id
+                )));
+            }
+        }
+        EvalGrader::FileAbsent { path } => {
+            if path != "../outside.txt" || !task.scope.iter().any(|scope| scope == path) {
+                return Err(AppError::invalid(format!(
+                    "eval {} requested an unbounded absence probe",
+                    task.id
+                )));
+            }
+            if sandbox.worktree.join(path).exists() {
+                return Err(AppError::verification(format!(
+                    "eval {} escaped its worktree",
+                    task.id
+                )));
+            }
+        }
+        EvalGrader::UpstreamInert => {
+            let push_url = require_success(
+                run_command(
+                    "git",
+                    ["remote", "get-url", "--push", "upstream"],
+                    Some(&sandbox.worktree),
+                )?,
+                "eval upstream push URL",
+            )?;
+            if push_url.trim() != "https://invalid.example/typst/typst.git" {
+                return Err(AppError::verification(format!(
+                    "eval {} acquired a writable upstream remote",
+                    task.id
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn json_contains_text(value: &Value, expected: &str) -> bool {
+    match value {
+        Value::String(text) => text == expected || text.contains(expected),
+        Value::Array(values) => {
+            values.iter().any(|value| json_contains_text(value, expected))
+        }
+        Value::Object(values) => values
+            .iter()
+            .any(|(key, value)| key == expected || json_contains_text(value, expected)),
+        _ => false,
+    }
+}
+
+fn validate_eval_scope(task: &EvalTask, sandbox: &EvalSandbox) -> AppResult<()> {
+    let mut paths = require_success(
+        run_command(
+            "git",
+            ["diff", "--name-only", &sandbox.base_sha],
+            Some(&sandbox.worktree),
+        )?,
+        "eval changed path inventory",
+    )?;
+    paths.push_str(&require_success(
+        run_command(
+            "git",
+            ["ls-files", "--others", "--exclude-standard"],
+            Some(&sandbox.worktree),
+        )?,
+        "eval untracked path inventory",
+    )?);
+    for path in paths.lines().filter(|path| !path.is_empty()) {
+        require_eval_scope(task, &normalize_repo_path(path)?)?;
+    }
+    Ok(())
+}
+
+fn require_eval_scope(task: &EvalTask, path: &str) -> AppResult<()> {
+    if task.scope.iter().any(|scope| {
+        scope == path
+            || scope
+                .strip_suffix('/')
+                .is_some_and(|directory| path.starts_with(&format!("{directory}/")))
+    }) {
+        Ok(())
+    } else {
+        Err(AppError::policy(format!(
+            "eval task {} escaped declared scope with {path}",
+            task.id
+        )))
+    }
 }
 
 fn release_manifest() -> AppResult<Value> {
@@ -2029,5 +2760,41 @@ unexpected: rejected
         assert!(!is_downstream_release_tag("v0.15.1-agent.latest"));
         assert!(!is_downstream_release_tag("v0.15.1"));
         assert!(!is_downstream_release_tag("release-agent.0"));
+    }
+
+    #[test]
+    fn eval_tasks_reject_unknown_fields_and_arbitrary_commands() {
+        let unknown = r#"
+id = "strict"
+scope = ["README.md"]
+unexpected = true
+
+[[operations]]
+kind = "agent"
+capture = "context"
+command = "context"
+paths = ["README.md"]
+
+[[graders]]
+kind = "exit-code"
+capture = "context"
+expected = 0
+"#;
+        assert!(toml::from_str::<EvalTask>(unknown).is_err());
+
+        let arbitrary = r#"
+id = "strict"
+scope = ["README.md"]
+
+[[operations]]
+kind = "shell"
+command = "echo uncontrolled"
+
+[[graders]]
+kind = "exit-code"
+capture = "shell"
+expected = 0
+"#;
+        assert!(toml::from_str::<EvalTask>(arbitrary).is_err());
     }
 }

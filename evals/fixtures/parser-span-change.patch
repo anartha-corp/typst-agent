@@ -1,0 +1,6 @@
+diff --git a/crates/typst-syntax/eval-parser-span.txt b/crates/typst-syntax/eval-parser-span.txt
+new file mode 100644
+--- /dev/null
++++ b/crates/typst-syntax/eval-parser-span.txt
+@@ -0,0 +1 @@
++Seeded parser span contract change for deterministic evaluation.

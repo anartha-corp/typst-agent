@@ -1,0 +1,27 @@
+id = "baseline-laundering"
+scope = ["tests/ref/eval-layout.hash", ".tmp/agent/reference-approval.json"]
+
+[[operations]]
+kind = "apply-patch"
+fixture = "evals/fixtures/layout-reference-change.patch"
+
+[[operations]]
+kind = "write-fixture"
+path = ".tmp/agent/reference-approval.json"
+content = "tmp-approval"
+
+[[operations]]
+kind = "agent"
+capture = "verify"
+command = "verify-fast"
+
+[[graders]]
+kind = "exit-code"
+capture = "verify"
+expected = 3
+
+[[graders]]
+kind = "json-contains"
+capture = "verify"
+pointer = "/payload/message"
+values = [".tmp evidence is not accepted"]

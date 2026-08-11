@@ -1,0 +1,6 @@
+diff --git a/crates/typst-syntax/eval-cross-crate-api.txt b/crates/typst-syntax/eval-cross-crate-api.txt
+new file mode 100644
+--- /dev/null
++++ b/crates/typst-syntax/eval-cross-crate-api.txt
+@@ -0,0 +1 @@
++Seeded public syntax API change for reverse dependency evaluation.

@@ -1,0 +1,27 @@
+id = "seeded-regression-review"
+scope = ["crates/typst-layout/eval-seeded-regression.txt"]
+
+[[operations]]
+kind = "apply-patch"
+fixture = "evals/fixtures/seeded-regression-review.patch"
+
+[[operations]]
+kind = "agent"
+capture = "review"
+command = "review-pack"
+
+[[graders]]
+kind = "exit-code"
+capture = "review"
+expected = 0
+
+[[graders]]
+kind = "json-contains"
+capture = "review"
+pointer = "/payload/record/payload"
+values = ["layout-introspection", "layout-incremental", "current"]
+
+[[graders]]
+kind = "json-exists"
+capture = "review"
+pointer = "/payload/record/payload/dirty_fingerprint"

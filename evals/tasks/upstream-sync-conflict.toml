@@ -1,0 +1,24 @@
+id = "upstream-sync-conflict"
+scope = ["refs/heads/mirror/upstream-main"]
+
+[[operations]]
+kind = "set-mirror-to-head"
+
+[[operations]]
+kind = "agent"
+capture = "upstream"
+command = "upstream-check"
+
+[[graders]]
+kind = "exit-code"
+capture = "upstream"
+expected = 3
+
+[[graders]]
+kind = "json-contains"
+capture = "upstream"
+pointer = "/payload/message"
+values = ["mirror/upstream-main", "differs from upstream/main"]
+
+[[graders]]
+kind = "upstream-inert"

@@ -1,0 +1,19 @@
+id = "navigation"
+scope = ["crates/typst-syntax/src/parser.rs"]
+
+[[operations]]
+kind = "agent"
+capture = "context"
+command = "context"
+paths = ["crates/typst-syntax/src/parser.rs"]
+
+[[graders]]
+kind = "exit-code"
+capture = "context"
+expected = 0
+
+[[graders]]
+kind = "json-contains"
+capture = "context"
+pointer = "/payload"
+values = [".agents/areas/parser-spans.md", "syntax-parse-total", "syntax-span-stable"]

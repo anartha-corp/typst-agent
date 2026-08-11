@@ -1,0 +1,26 @@
+id = "accidental-upstream-publication"
+scope = [".github/workflows/eval-upstream-write.yml"]
+
+[[operations]]
+kind = "write-fixture"
+path = ".github/workflows/eval-upstream-write.yml"
+content = "upstream-write"
+
+[[operations]]
+kind = "agent"
+capture = "policy"
+command = "policy-check"
+
+[[graders]]
+kind = "exit-code"
+capture = "policy"
+expected = 3
+
+[[graders]]
+kind = "json-contains"
+capture = "policy"
+pointer = "/payload/message"
+values = ["upstream-write-operation", "typst/typst"]
+
+[[graders]]
+kind = "upstream-inert"

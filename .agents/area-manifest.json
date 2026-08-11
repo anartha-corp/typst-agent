@@ -73,7 +73,7 @@
         "exact_paths": ["Dockerfile", "Dockerfile.agent-dev", "Cargo.toml", "Cargo.lock"],
         "authority_sources": [".github/workflows/", "Dockerfile", "Cargo.toml", "scripts/"],
         "guide": ".agents/areas/release.md",
-        "required_checks": ["cargo agent policy-check", "cargo agent upstream-check", "cargo agent release-manifest"],
+        "required_checks": ["cargo agent policy-check", "cargo agent upstream-check", "cargo agent release-manifest --input .tmp/agent/release/release-input.json"],
         "invariant_ids": ["release-provenance", "release-human-gate"]
       },
       {

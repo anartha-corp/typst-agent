@@ -1,5 +1,5 @@
-FROM --platform=$BUILDPLATFORM tonistiigi/xx AS xx
-FROM --platform=$BUILDPLATFORM rust:alpine AS build
+FROM --platform=$BUILDPLATFORM tonistiigi/xx:1.7.0@sha256:010d4b66aed389848b0694f91c7aaee9df59a6f20be7f5d12e53663a37bd14e2 AS xx
+FROM --platform=$BUILDPLATFORM rust:1.95.0-alpine3.23@sha256:606fd313a0f49743ee2a7bd49a0914bab7deedb12791f3a846a34a4711db7ed2 AS build
 
 COPY --from=xx / /
 
@@ -13,18 +13,21 @@ RUN --mount=type=cache,target=/root/.cargo/git/db \
     cargo fetch
 
 ARG TARGETPLATFORM
+ARG TYPST_AGENT_COMMIT_SHA
 
 RUN xx-apk add --no-cache musl-dev openssl-dev openssl-libs-static
 RUN --mount=type=cache,target=/root/.cargo/git/db \
     --mount=type=cache,target=/root/.cargo/registry/cache \
     --mount=type=cache,target=/root/.cargo/registry/index \
     OPENSSL_NO_PKG_CONFIG=1 OPENSSL_STATIC=1 \
+    TYPST_AGENT_COMMIT_SHA="$TYPST_AGENT_COMMIT_SHA" \
     OPENSSL_DIR=$(xx-info is-cross && echo /$(xx-info)/usr/ || echo /usr) \
-    xx-cargo build -p typst-cli --release --bin typst-agent && \
+    xx-cargo build --locked -p typst-cli --release --bin typst-agent \
+      --features self-update,vendor-openssl && \
     cp target/$(xx-cargo --print-target-triple)/release/typst-agent target/release/typst-agent && \
     xx-verify target/release/typst-agent
 
-FROM alpine:latest
+FROM alpine:3.23.3@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659
 ARG CREATED
 ARG REVISION
 

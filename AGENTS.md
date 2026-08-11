@@ -33,7 +33,7 @@ Available commands:
 cargo agent doctor
 cargo agent context --paths <path>... --format human|json
 cargo agent impact --base <ref>
-cargo agent verify --tier fast|pr|full
+cargo agent verify --tier fast|pr|full --base <ref>
 cargo agent review-pack --base <ref>
 cargo agent policy-check
 cargo agent upstream-check

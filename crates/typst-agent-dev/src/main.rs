@@ -7,8 +7,10 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -82,6 +84,8 @@ struct ReviewPackArgs {
 struct VerifyArgs {
     #[arg(long, value_enum, default_value_t = VerifyTier::Fast)]
     tier: VerifyTier,
+    #[arg(long, default_value = "main")]
+    base: String,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -241,10 +245,12 @@ struct PolicyReport {
 #[derive(Debug, Serialize)]
 struct VerificationEvidence {
     tier: String,
-    checks: Vec<CheckEvidence>,
+    base_sha: String,
+    head_sha: String,
+    changed_paths: Vec<String>,
+    dirty_fingerprint: String,
     selected_tests: Vec<String>,
-    dirty_paths: Vec<String>,
-    reference_paths: Vec<String>,
+    checks: Vec<CheckEvidence>,
     status: String,
 }
 
@@ -253,7 +259,48 @@ struct CheckEvidence {
     name: String,
     status: String,
     exit_code: Option<i32>,
-    output: String,
+    output_sha256: String,
+    output_bytes: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReferenceApproval {
+    head_sha: String,
+    reviewer: String,
+    reference_paths: Vec<String>,
+    visual_report: String,
+    invariant_impact: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ReferenceEvidence {
+    path: String,
+    visual_report: String,
+    invariant_impact: String,
+    approved_head_sha: String,
+    human_approved: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ReviewEvidence {
+    base_sha: String,
+    head_sha: String,
+    dirty_fingerprint: String,
+    invariant_records: Vec<InvariantRecord>,
+    review_prompts: Vec<String>,
+    selected_tests: Vec<String>,
+    reference_evidence: Vec<ReferenceEvidence>,
+    evidence_created_head_sha: String,
+    freshness: String,
+}
+
+#[derive(Debug)]
+struct VerificationCommand {
+    name: String,
+    program: String,
+    args: Vec<String>,
+    cwd: Option<PathBuf>,
 }
 
 fn main() {
@@ -291,7 +338,7 @@ fn dispatch(cli: &Cli) -> AppResult<(&'static str, Value)> {
         CommandKind::Impact(args) => Ok(("impact", json_value(impact(&args.base)?)?)),
         CommandKind::Verify(args) => Ok((
             "verify",
-            serde_json::to_value(verify(args.tier)?)
+            serde_json::to_value(verify(args.tier, &args.base)?)
                 .map_err(|error| AppError::invalid(error.to_string()))?,
         )),
         CommandKind::ReviewPack(args) => Ok(("review-pack", review_pack(&args.base)?)),
@@ -391,12 +438,13 @@ struct CommandOutput {
 
 fn bounded(mut output: String) -> String {
     if output.len() > MAX_OUTPUT_BYTES {
-        let mut boundary = MAX_OUTPUT_BYTES;
+        const MARKER: &str = "\n[output truncated]";
+        let mut boundary = MAX_OUTPUT_BYTES - MARKER.len();
         while !output.is_char_boundary(boundary) {
             boundary -= 1;
         }
         output.truncate(boundary);
-        output.push_str("\n[output truncated]");
+        output.push_str(MARKER);
     }
     output
 }
@@ -676,35 +724,25 @@ fn dirty_paths(repo: &Path) -> AppResult<Vec<String>> {
     changed_paths(repo, None)
 }
 
+fn changed_union(repo: &Path, base: &str) -> AppResult<Vec<String>> {
+    let mut paths = changed_paths(repo, Some(base))?.into_iter().collect::<BTreeSet<_>>();
+    paths.extend(dirty_paths(repo)?);
+    Ok(paths.into_iter().collect())
+}
+
 fn reference_paths(paths: &[String]) -> Vec<String> {
     paths
         .iter()
         .filter(|path| {
             path.starts_with("tests/ref/")
-                || path.starts_with("tests/suite/")
                 || path.ends_with(".snap")
+                || path.ends_with(".hash")
         })
         .cloned()
         .collect()
 }
 
-fn assert_contained(paths: &[String]) -> AppResult<()> {
-    let outside = paths
-        .iter()
-        .filter(|path| path.starts_with('/') || path.split('/').any(|part| part == ".."))
-        .cloned()
-        .collect::<Vec<_>>();
-    if outside.is_empty() {
-        Ok(())
-    } else {
-        Err(AppError::policy(format!(
-            "worktree path escapes repository scope: {}",
-            outside.join(", ")
-        )))
-    }
-}
-
-fn selected_tests(paths: &[String]) -> Vec<(String, Vec<String>)> {
+fn selected_test_commands(paths: &[String]) -> Vec<VerificationCommand> {
     let mut packages = BTreeSet::new();
     let mut integration = false;
     for path in paths {
@@ -720,18 +758,197 @@ fn selected_tests(paths: &[String]) -> Vec<(String, Vec<String>)> {
     }
     let mut commands = packages
         .into_iter()
-        .filter(|package| package != "typst-agent-dev")
-        .map(|package| {
-            (
-                format!("cargo test -p {package}"),
-                vec!["test".into(), "-p".into(), package],
-            )
+        .map(|package| VerificationCommand {
+            name: format!("cargo test -p {package}"),
+            program: "cargo".into(),
+            args: vec!["test".into(), "-p".into(), package],
+            cwd: None,
         })
         .collect::<Vec<_>>();
     if integration {
-        commands.push(("cargo testit".into(), vec!["testit".into()]));
+        commands.push(VerificationCommand {
+            name: "cargo testit".into(),
+            program: "cargo".into(),
+            args: vec!["testit".into()],
+            cwd: None,
+        });
     }
     commands
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    digest_hex(&digest)
+}
+
+fn digest_hex(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(&mut output, "{byte:02x}").expect("writing to a string cannot fail");
+    }
+    output
+}
+
+fn dirty_fingerprint(repo: &Path) -> AppResult<String> {
+    let diff = require_success(
+        run_command(
+            "git",
+            ["diff", "--binary", "--no-ext-diff", "HEAD", "--"],
+            Some(repo),
+        )?,
+        "dirty worktree diff",
+    )?;
+    let untracked = require_success(
+        run_command("git", ["ls-files", "--others", "--exclude-standard"], Some(repo))?,
+        "untracked file inventory",
+    )?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"typst-agent-dirty-v1\0");
+    hasher.update(diff.as_bytes());
+    for raw_path in untracked.lines().map(str::trim).filter(|path| !path.is_empty()) {
+        let path = normalize_repo_path(raw_path)?;
+        let full = repo.join(&path);
+        if !full.is_file() {
+            continue;
+        }
+        let metadata = fs::metadata(&full).map_err(|error| {
+            AppError::authority(format!("cannot inspect {path}: {error}"))
+        })?;
+        if metadata.len() > MAX_SEMANTIC_EVIDENCE_BYTES {
+            return Err(AppError::authority(format!(
+                "dirty evidence exceeds {MAX_SEMANTIC_EVIDENCE_BYTES} bytes: {path}"
+            )));
+        }
+        let bytes = fs::read(&full).map_err(|error| {
+            AppError::authority(format!("cannot fingerprint {path}: {error}"))
+        })?;
+        hasher.update(path.as_bytes());
+        hasher.update([0]);
+        hasher.update((bytes.len() as u64).to_be_bytes());
+        hasher.update(bytes);
+    }
+    let digest = hasher.finalize();
+    Ok(digest_hex(&digest))
+}
+
+fn current_sha(repo: &Path) -> AppResult<String> {
+    Ok(require_success(
+        run_command("git", ["rev-parse", "HEAD"], Some(repo))?,
+        "current head",
+    )?
+    .trim()
+    .to_owned())
+}
+
+fn base_sha(repo: &Path, base: &str) -> AppResult<String> {
+    Ok(require_success(
+        run_command("git", ["merge-base", base, "HEAD"], Some(repo))?,
+        "verification base",
+    )?
+    .trim()
+    .to_owned())
+}
+
+fn reference_evidence(
+    repo: &Path,
+    paths: &[String],
+    head_sha: &str,
+) -> AppResult<Vec<ReferenceEvidence>> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let git_path = require_success(
+        run_command(
+            "git",
+            ["rev-parse", "--git-path", "typst-agent/reference-approval.json"],
+            Some(repo),
+        )?,
+        "reference approval path",
+    )?;
+    let approval_path = PathBuf::from(git_path.trim());
+    let approval_path = if approval_path.is_absolute() {
+        approval_path
+    } else {
+        repo.join(approval_path)
+    };
+    if !approval_path.is_file() {
+        return Err(AppError::policy(
+            "reference changes require hosted current-head human approval; .tmp evidence is not accepted",
+        ));
+    }
+    let approval: ReferenceApproval =
+        serde_json::from_str(&read_semantic_text(&approval_path)?).map_err(|error| {
+            AppError::invalid(format!("invalid reference approval: {error}"))
+        })?;
+    validate_reference_approval(&approval, paths, head_sha)?;
+    let visual_report = validate_tracked_review_artifact(repo, &approval.visual_report)?;
+    let invariant_impact =
+        validate_tracked_review_artifact(repo, &approval.invariant_impact)?;
+    Ok(paths
+        .iter()
+        .map(|path| ReferenceEvidence {
+            path: path.clone(),
+            visual_report: visual_report.clone(),
+            invariant_impact: invariant_impact.clone(),
+            approved_head_sha: head_sha.to_owned(),
+            human_approved: true,
+        })
+        .collect())
+}
+
+fn validate_reference_approval(
+    approval: &ReferenceApproval,
+    paths: &[String],
+    head_sha: &str,
+) -> AppResult<()> {
+    if approval.head_sha != head_sha {
+        return Err(AppError::policy(format!(
+            "reference approval is stale: expected {head_sha}, found {}",
+            approval.head_sha
+        )));
+    }
+    if approval.reviewer.trim().is_empty() {
+        return Err(AppError::policy("reference approval has no human reviewer"));
+    }
+    let expected = paths.iter().cloned().collect::<BTreeSet<_>>();
+    let approved = approval
+        .reference_paths
+        .iter()
+        .map(|path| normalize_repo_path(path))
+        .collect::<AppResult<BTreeSet<_>>>()?;
+    if approved != expected {
+        return Err(AppError::policy(
+            "reference approval does not cover the exact current reference paths",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_tracked_review_artifact(repo: &Path, path: &str) -> AppResult<String> {
+    let path = normalize_repo_path(path)?;
+    if path.starts_with(".tmp/") || !repo.join(&path).is_file() {
+        return Err(AppError::policy(format!(
+            "review artifact must be a tracked repository file: {path}"
+        )));
+    }
+    let tracked = run_command(
+        "git",
+        ["ls-files", "--error-unmatch", "--", path.as_str()],
+        Some(repo),
+    )?;
+    if tracked.status != Some(0) {
+        return Err(AppError::policy(format!("review artifact is not tracked: {path}")));
+    }
+    if fs::metadata(repo.join(&path))
+        .map_err(|error| AppError::authority(error.to_string()))?
+        .len()
+        == 0
+    {
+        return Err(AppError::policy(format!("review artifact is empty: {path}")));
+    }
+    Ok(path)
 }
 
 fn context(args: &ContextArgs) -> AppResult<ContextReport> {
@@ -1132,84 +1349,81 @@ fn contains_token(text: &str, marker: &str, minimum_suffix: usize) -> bool {
     false
 }
 
-fn verify(tier: VerifyTier) -> AppResult<VerificationEvidence> {
+fn verify(tier: VerifyTier, base: &str) -> AppResult<VerificationEvidence> {
     let repo = root()?;
-    let dirty = dirty_paths(&repo)?;
-    assert_contained(&dirty)?;
-    let references = reference_paths(&dirty);
-    if !references.is_empty() && !repo.join(".tmp/agent/reference-review.json").is_file()
-    {
-        return Err(AppError::policy(format!(
-            "reference changes require .tmp/agent/reference-review.json: {}",
-            references.join(", ")
-        )));
-    }
+    let paths = changed_union(&repo, base)?;
+    let head_sha = current_sha(&repo)?;
+    let base_sha = base_sha(&repo, base)?;
+    let fingerprint = dirty_fingerprint(&repo)?;
+    let references = reference_paths(&paths);
+    reference_evidence(&repo, &references, &head_sha)?;
+    let selected = selected_test_commands(&paths);
+    let selected_tests = selected.iter().map(|command| command.name.clone()).collect();
     let mut checks = Vec::new();
     let policy = match policy_check() {
-        Ok(_) => CheckEvidence {
-            name: "policy-check".into(),
-            status: "passed".into(),
-            exit_code: Some(0),
-            output: String::new(),
-        },
-        Err(error) => CheckEvidence {
-            name: "policy-check".into(),
-            status: "failed".into(),
-            exit_code: Some(error.code.into()),
-            output: error.message,
-        },
+        Ok(_) => {
+            record_check(&repo, checks.len(), "policy-check", "passed", Some(0), "")?
+        }
+        Err(error) => {
+            let status = if error.code == 5 { "unavailable" } else { "failed" };
+            record_check(
+                &repo,
+                checks.len(),
+                "policy-check",
+                status,
+                Some(error.code.into()),
+                &error.message,
+            )?
+        }
     };
-    let policy_failed = policy.status == "failed";
     checks.push(policy);
-    let mut commands: Vec<(String, Vec<String>)> = vec![
-        (
-            "cargo fmt --check".into(),
-            vec!["fmt".into(), "--all".into(), "--check".into()],
+    let mut commands = vec![
+        verification_command(
+            "cargo fmt --all -- --check",
+            "cargo",
+            ["fmt", "--all", "--", "--check"],
         ),
-        (
-            "cargo check -p typst-agent-dev".into(),
-            vec!["check".into(), "-p".into(), "typst-agent-dev".into()],
+        verification_command(
+            "cargo check -p typst-agent-dev",
+            "cargo",
+            ["check", "-p", "typst-agent-dev"],
         ),
     ];
     if matches!(tier, VerifyTier::Pr | VerifyTier::Full) {
-        commands.push((
-            "cargo test -p typst-agent-dev".into(),
-            vec!["test".into(), "-p".into(), "typst-agent-dev".into()],
+        commands.push(verification_command(
+            "cargo test -p typst-agent-dev",
+            "cargo",
+            ["test", "-p", "typst-agent-dev"],
         ));
-        if !matches!(tier, VerifyTier::Full) {
-            commands.extend(selected_tests(&dirty));
-        }
+        commands.extend(selected);
     }
     if matches!(tier, VerifyTier::Full) {
-        commands.push((
-            "cargo test --workspace".into(),
-            vec!["test".into(), "--workspace".into()],
-        ));
+        commands.extend(full_verification_commands(&repo));
     }
-    for (name, args) in commands {
-        let result = run_command("cargo", args.iter(), Some(&repo))?;
-        let passed = result.status == Some(0);
-        checks.push(CheckEvidence {
-            name,
-            status: if passed { "passed" } else { "failed" }.into(),
-            exit_code: result.status,
-            output: bounded(format!("{}{}", result.stdout, result.stderr)),
-        });
-        if !passed {
-            break;
+    let mut seen = BTreeSet::new();
+    for command in commands {
+        if seen.insert(command.name.clone()) {
+            checks.push(run_verification(&repo, checks.len(), &command)?);
         }
     }
-    let failed = policy_failed || checks.iter().any(|check| check.status == "failed");
+    let failed = checks.iter().any(|check| check.status == "failed");
+    let unavailable = checks.iter().any(|check| check.status == "unavailable");
+    let status = if failed {
+        "failed"
+    } else if unavailable {
+        "unavailable"
+    } else {
+        "passed"
+    };
     let evidence = VerificationEvidence {
         tier: format!("{tier:?}").to_lowercase(),
+        base_sha,
+        head_sha,
+        changed_paths: paths,
+        dirty_fingerprint: fingerprint,
+        selected_tests,
         checks,
-        selected_tests: selected_tests(&dirty)
-            .into_iter()
-            .map(|(name, _)| name)
-            .collect(),
-        dirty_paths: dirty,
-        reference_paths: references,
-        status: if failed { "failed".into() } else { "passed".into() },
+        status: status.into(),
     };
     if failed {
         return Err(AppError::verification(
@@ -1217,37 +1431,199 @@ fn verify(tier: VerifyTier) -> AppResult<VerificationEvidence> {
                 .unwrap_or_else(|_| "verification failed".into()),
         ));
     }
+    if unavailable {
+        return Err(AppError::authority(
+            serde_json::to_string(&evidence)
+                .unwrap_or_else(|_| "verification authority unavailable".into()),
+        ));
+    }
     Ok(evidence)
+}
+
+fn verification_command<const N: usize>(
+    name: &str,
+    program: &str,
+    args: [&str; N],
+) -> VerificationCommand {
+    VerificationCommand {
+        name: name.into(),
+        program: program.into(),
+        args: args.into_iter().map(str::to_owned).collect(),
+        cwd: None,
+    }
+}
+
+fn full_verification_commands(repo: &Path) -> Vec<VerificationCommand> {
+    let mut fuzz = verification_command(
+        "cargo +nightly-2025-10-28 fuzz build --dev",
+        "cargo",
+        ["+nightly-2025-10-28", "fuzz", "build", "--dev"],
+    );
+    fuzz.cwd = Some(repo.join("tests/fuzz"));
+    vec![
+        verification_command(
+            "cargo test --workspace --locked",
+            "cargo",
+            ["test", "--workspace", "--locked"],
+        ),
+        verification_command("cargo testit", "cargo", ["testit"]),
+        verification_command(
+            "cargo clippy --workspace --all-targets --all-features",
+            "cargo",
+            [
+                "clippy",
+                "--workspace",
+                "--all-targets",
+                "--all-features",
+                "--",
+                "-D",
+                "warnings",
+            ],
+        ),
+        verification_command(
+            "cargo clippy --workspace --all-targets --no-default-features",
+            "cargo",
+            [
+                "clippy",
+                "--workspace",
+                "--all-targets",
+                "--no-default-features",
+                "--",
+                "-D",
+                "warnings",
+            ],
+        ),
+        verification_command(
+            "cargo doc --workspace --no-deps --document-private-items",
+            "cargo",
+            ["doc", "--workspace", "--no-deps", "--document-private-items"],
+        ),
+        verification_command(
+            "cargo +1.92.0 check --workspace --locked",
+            "cargo",
+            ["+1.92.0", "check", "--workspace", "--locked"],
+        ),
+        fuzz,
+        verification_command(
+            "cargo +nightly-2025-10-28 miri test -p typst-library test_miri",
+            "cargo",
+            ["+nightly-2025-10-28", "miri", "test", "-p", "typst-library", "test_miri"],
+        ),
+    ]
+}
+
+fn run_verification(
+    repo: &Path,
+    index: usize,
+    command: &VerificationCommand,
+) -> AppResult<CheckEvidence> {
+    let result = run_command(
+        &command.program,
+        command.args.iter(),
+        Some(command.cwd.as_deref().unwrap_or(repo)),
+    )?;
+    let output = bounded(format!("{}{}", result.stdout, result.stderr));
+    let status = if result.status == Some(0) {
+        "passed"
+    } else if unavailable_output(&output) {
+        "unavailable"
+    } else {
+        "failed"
+    };
+    record_check(repo, index, &command.name, status, result.status, &output)
+}
+
+fn unavailable_output(output: &str) -> bool {
+    [
+        "toolchain is not installed",
+        "no such command: `fuzz`",
+        "the 'miri' component",
+        "component 'miri'",
+        "command not found",
+        "No such file or directory",
+    ]
+    .iter()
+    .any(|marker| output.contains(marker))
+}
+
+fn record_check(
+    repo: &Path,
+    index: usize,
+    name: &str,
+    status: &str,
+    exit_code: Option<i32>,
+    output: &str,
+) -> AppResult<CheckEvidence> {
+    let output = bounded(output.to_owned());
+    let directory = repo.join(".tmp/agent/verify");
+    fs::create_dir_all(&directory)
+        .map_err(|error| AppError::authority(error.to_string()))?;
+    fs::write(directory.join(format!("{index:02}.log")), output.as_bytes())
+        .map_err(|error| AppError::authority(error.to_string()))?;
+    Ok(CheckEvidence {
+        name: name.into(),
+        status: status.into(),
+        exit_code,
+        output_sha256: sha256_hex(output.as_bytes()),
+        output_bytes: output.len(),
+    })
 }
 
 fn review_pack(base: &str) -> AppResult<Value> {
     let repo = root()?;
-    let dirty = dirty_paths(&repo)?;
-    assert_contained(&dirty)?;
-    let references = reference_paths(&dirty);
-    let impact_report = impact(base)?;
-    let policy = policy_check()?;
+    policy_check()?;
+    let paths = changed_union(&repo, base)?;
+    let head_sha = current_sha(&repo)?;
+    let base_sha = base_sha(&repo, base)?;
+    let dirty_fingerprint = dirty_fingerprint(&repo)?;
+    let context =
+        context(&ContextArgs { paths: paths.iter().map(PathBuf::from).collect() })?;
+    let mut review_prompts = context
+        .invariants
+        .iter()
+        .flat_map(|record| record.review_prompts.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    if review_prompts.is_empty() {
+        review_prompts.insert(
+            "Confirm the changed paths preserve repository-wide invariants.".into(),
+        );
+    }
+    let references = reference_paths(&paths);
+    let reference_evidence = reference_evidence(&repo, &references, &head_sha)?;
+    let selected_tests = selected_test_commands(&paths)
+        .into_iter()
+        .map(|command| command.name)
+        .collect();
+    let evidence = ReviewEvidence {
+        base_sha,
+        head_sha: head_sha.clone(),
+        dirty_fingerprint,
+        invariant_records: context.invariants,
+        review_prompts: review_prompts.into_iter().collect(),
+        selected_tests,
+        reference_evidence,
+        evidence_created_head_sha: head_sha.clone(),
+        freshness: if current_sha(&repo)? == head_sha { "current" } else { "stale" }
+            .into(),
+    };
     let pack = json!({
         "contract_version": CONTRACT_VERSION,
-        "base": base,
-        "impact": impact_report,
-        "policy": policy,
-        "dirty_worktree": {"paths": dirty, "contained": true},
-        "reference_guard": {"paths": references, "approval_required": true, "baseline_update_allowed": false},
-        "human_approval_required": true,
-        "reference_updates_allowed": false,
+        "kind": "ReviewEvidence",
+        "payload": evidence,
     });
     let directory = repo.join(".tmp/agent");
     fs::create_dir_all(&directory)
         .map_err(|error| AppError::authority(error.to_string()))?;
     let path = directory.join("review-pack.json");
-    fs::write(
-        &path,
-        serde_json::to_vec_pretty(&pack)
-            .map_err(|error| AppError::invalid(error.to_string()))?,
-    )
-    .map_err(|error| AppError::authority(error.to_string()))?;
-    Ok(json!({"path": ".tmp/agent/review-pack.json", "pack": pack}))
+    let bytes = serde_json::to_vec_pretty(&pack)
+        .map_err(|error| AppError::invalid(error.to_string()))?;
+    if bytes.len() as u64 > MAX_SEMANTIC_EVIDENCE_BYTES {
+        return Err(AppError::authority(
+            "review evidence exceeds the semantic evidence limit",
+        ));
+    }
+    fs::write(&path, bytes).map_err(|error| AppError::authority(error.to_string()))?;
+    Ok(json!({"path": ".tmp/agent/review-pack.json", "record": pack}))
 }
 
 fn upstream_check() -> AppResult<Value> {
@@ -1507,9 +1883,74 @@ unexpected: rejected
     }
 
     #[test]
+    fn committed_paths_select_focused_tests_without_dirty_state() {
+        let commands = selected_test_commands(&[
+            "crates/typst-syntax/src/lib.rs".into(),
+            "tests/suite/parser/basic.typ".into(),
+        ]);
+        let names = commands
+            .into_iter()
+            .map(|command| command.name)
+            .collect::<BTreeSet<_>>();
+        assert!(names.contains("cargo test -p typst-syntax"));
+        assert!(names.contains("cargo testit"));
+    }
+
+    #[test]
+    fn reference_detection_does_not_treat_every_fixture_as_a_baseline() {
+        assert_eq!(
+            reference_paths(&[
+                "tests/suite/parser/basic.typ".into(),
+                "tests/ref/parser/basic.png".into(),
+                "tests/ref.hash".into(),
+            ]),
+            vec!["tests/ref/parser/basic.png".to_owned(), "tests/ref.hash".to_owned(),]
+        );
+    }
+
+    #[test]
+    fn reference_approval_is_exact_head_and_exact_scope() {
+        let approval = ReferenceApproval {
+            head_sha: "a51e028041cac426f97d34335bb01d8f1d8e5e8f".into(),
+            reviewer: "maintainer".into(),
+            reference_paths: vec!["tests/ref/parser/basic.png".into()],
+            visual_report: "review/visual.md".into(),
+            invariant_impact: "review/invariants.md".into(),
+        };
+        let paths = vec!["tests/ref/parser/basic.png".into()];
+        assert!(
+            validate_reference_approval(&approval, &paths, &approval.head_sha).is_ok()
+        );
+        assert!(
+            validate_reference_approval(
+                &approval,
+                &paths,
+                "0000000000000000000000000000000000000000"
+            )
+            .is_err()
+        );
+        assert!(
+            validate_reference_approval(
+                &approval,
+                &["tests/ref/layout/other.png".into()],
+                &approval.head_sha
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn sha256_is_stable() {
+        assert_eq!(
+            sha256_hex(b"typst-agent"),
+            "711190228c0141c926a99c4b0c119fcc6d80d0165b2612338f5fa3428b8570c6"
+        );
+    }
+
+    #[test]
     fn output_is_bounded() {
         let output = bounded(format!("{}é", "x".repeat(MAX_OUTPUT_BYTES - 1)));
-        assert!(output.len() <= MAX_OUTPUT_BYTES + "\n[output truncated]".len());
+        assert!(output.len() <= MAX_OUTPUT_BYTES);
         assert!(output.ends_with("[output truncated]"));
     }
 }

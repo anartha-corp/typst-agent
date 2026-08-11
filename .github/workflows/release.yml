@@ -49,6 +49,7 @@ jobs:
           git remote get-url upstream >/dev/null 2>&1 || \
             git remote add upstream https://github.com/typst/typst.git
           git remote set-url --push upstream https://invalid.example/typst/typst.git
+          scripts/upstream-sync.sh
           cargo agent doctor --format json
           cargo agent upstream-check --format json
           cargo agent policy-check --format json

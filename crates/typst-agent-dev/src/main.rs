@@ -1628,13 +1628,6 @@ fn review_pack(base: &str) -> AppResult<Value> {
 
 fn upstream_check() -> AppResult<Value> {
     let repo = root()?;
-    let fetch = run_command("git", ["fetch", "--tags", "upstream", "main"], Some(&repo))?;
-    if fetch.status != Some(0) {
-        return Err(AppError::authority(format!(
-            "upstream fetch failed: {}",
-            fetch.stderr.trim()
-        )));
-    }
     let mirror = require_success(
         run_command(
             "git",
@@ -1665,36 +1658,34 @@ fn upstream_check() -> AppResult<Value> {
     if push_url.contains("github.com/typst/typst") {
         return Err(AppError::policy("upstream push URL is writable"));
     }
-    let remote_tags = remote_tags(&repo)?;
+    let remote_tags = fetched_upstream_tags(&repo)?;
     let local_tags = local_tags(&repo)?;
-    if remote_tags != local_tags {
-        return Err(AppError::policy(format!(
-            "mirrored tags differ (upstream={}, local={})",
-            remote_tags.len(),
-            local_tags.len()
-        )));
-    }
+    verify_tag_snapshot(&remote_tags, &local_tags)?;
     Ok(
         json!({"mirror": mirror, "upstream": fetched, "identical": true, "push_url": push_url, "tags": {"count": local_tags.len(), "identical": true}}),
     )
 }
 
-fn remote_tags(repo: &Path) -> AppResult<BTreeMap<String, String>> {
+fn fetched_upstream_tags(repo: &Path) -> AppResult<BTreeMap<String, String>> {
     let output = require_success(
-        run_command("git", ["ls-remote", "--tags", "upstream"], Some(repo))?,
-        "upstream tags",
+        run_command(
+            "git",
+            [
+                "for-each-ref",
+                "--format=%(objectname)\t%(refname:strip=3)",
+                "refs/remotes/upstream-tags",
+            ],
+            Some(repo),
+        )?,
+        "fetched upstream tag refs",
     )?;
-    Ok(output
-        .lines()
-        .filter_map(|line| {
-            let (sha, reference) = line.split_once('\t')?;
-            let name = reference.strip_prefix("refs/tags/")?;
-            if name.ends_with("^{}") {
-                return None;
-            }
-            Some((name.to_owned(), sha.to_owned()))
-        })
-        .collect())
+    let tags = parse_ref_map(&output);
+    if tags.is_empty() {
+        return Err(AppError::authority(
+            "fetched upstream tag snapshot is unavailable; run scripts/upstream-sync.sh",
+        ));
+    }
+    Ok(tags)
 }
 
 fn local_tags(repo: &Path) -> AppResult<BTreeMap<String, String>> {
@@ -1706,13 +1697,61 @@ fn local_tags(repo: &Path) -> AppResult<BTreeMap<String, String>> {
         )?,
         "local tags",
     )?;
-    Ok(output
+    Ok(parse_ref_map(&output)
+        .into_iter()
+        .filter(|(name, _)| !is_downstream_release_tag(name))
+        .collect())
+}
+
+fn is_downstream_release_tag(name: &str) -> bool {
+    let Some((version, sequence)) =
+        name.strip_prefix('v').and_then(|name| name.split_once("-agent."))
+    else {
+        return false;
+    };
+    let mut components = version.split('.');
+    components.clone().count() == 3
+        && components.all(|component| {
+            !component.is_empty()
+                && component.chars().all(|character| character.is_ascii_digit())
+        })
+        && !sequence.is_empty()
+        && sequence.chars().all(|character| character.is_ascii_digit())
+}
+
+fn parse_ref_map(output: &str) -> BTreeMap<String, String> {
+    output
         .lines()
         .filter_map(|line| {
             let (sha, name) = line.split_once('\t')?;
             Some((name.to_owned(), sha.to_owned()))
         })
-        .collect())
+        .collect()
+}
+
+fn verify_tag_snapshot(
+    upstream: &BTreeMap<String, String>,
+    local: &BTreeMap<String, String>,
+) -> AppResult<()> {
+    if upstream == local {
+        return Ok(());
+    }
+    let mismatches = upstream
+        .iter()
+        .filter_map(|(name, upstream_sha)| {
+            local
+                .get(name)
+                .filter(|local_sha| *local_sha != upstream_sha)
+                .map(|local_sha| format!("{name}:{local_sha}->{upstream_sha}"))
+        })
+        .take(8)
+        .collect::<Vec<_>>();
+    Err(AppError::policy(format!(
+        "mirrored tags differ (upstream={}, local={}, mismatches={})",
+        upstream.len(),
+        local.len(),
+        if mismatches.is_empty() { "none".into() } else { mismatches.join(",") }
+    )))
 }
 
 fn eval() -> AppResult<Value> {
@@ -1952,5 +1991,43 @@ unexpected: rejected
         let output = bounded(format!("{}é", "x".repeat(MAX_OUTPUT_BYTES - 1)));
         assert!(output.len() <= MAX_OUTPUT_BYTES);
         assert!(output.ends_with("[output truncated]"));
+    }
+
+    #[test]
+    fn fetched_tag_snapshot_is_strict_and_deterministic() {
+        let upstream = parse_ref_map(
+            "2222222222222222222222222222222222222222\tv0.15.1\n\
+             1111111111111111111111111111111111111111\tv0.15.0\n",
+        );
+        let identical = BTreeMap::from([
+            ("v0.15.0".into(), "1111111111111111111111111111111111111111".into()),
+            ("v0.15.1".into(), "2222222222222222222222222222222222222222".into()),
+        ]);
+        assert_eq!(upstream, identical);
+        assert!(verify_tag_snapshot(&upstream, &identical).is_ok());
+
+        let mismatched = BTreeMap::from([
+            ("v0.15.0".into(), "1111111111111111111111111111111111111111".into()),
+            ("v0.15.1".into(), "3333333333333333333333333333333333333333".into()),
+        ]);
+        let error = verify_tag_snapshot(&upstream, &mismatched).unwrap_err();
+        assert_eq!(error.code, 3);
+        assert!(error.message.contains("v0.15.1"));
+
+        let missing = BTreeMap::from([(
+            "v0.15.0".into(),
+            "1111111111111111111111111111111111111111".into(),
+        )]);
+        assert!(verify_tag_snapshot(&upstream, &missing).is_err());
+    }
+
+    #[test]
+    fn only_strict_downstream_release_tags_are_exempt_from_upstream_mirroring() {
+        assert!(is_downstream_release_tag("v0.15.1-agent.0"));
+        assert!(is_downstream_release_tag("v12.34.56-agent.789"));
+        assert!(!is_downstream_release_tag("v0.15-agent.0"));
+        assert!(!is_downstream_release_tag("v0.15.1-agent.latest"));
+        assert!(!is_downstream_release_tag("v0.15.1"));
+        assert!(!is_downstream_release_tag("release-agent.0"));
     }
 }

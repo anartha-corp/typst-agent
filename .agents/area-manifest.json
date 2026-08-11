@@ -1,0 +1,90 @@
+{
+  "contract_version": "agent-contract/v1",
+  "kind": "AreaManifest",
+  "payload": {
+    "manifest_version": 1,
+    "rules": [
+      {
+        "id": "parser-spans",
+        "path_prefixes": ["crates/typst-syntax/"],
+        "exact_paths": [],
+        "authority_sources": ["crates/typst-syntax/src/", "tests/src/tests.rs"],
+        "guide": ".agents/areas/parser-spans.md",
+        "required_checks": ["cargo test -p typst-syntax", "cargo agent verify --tier pr --base main"],
+        "invariant_ids": ["syntax-parse-total", "syntax-span-stable"]
+      },
+      {
+        "id": "evaluation",
+        "path_prefixes": ["crates/typst-eval/", "crates/typst-library/"],
+        "exact_paths": [],
+        "authority_sources": ["crates/typst/src/world.rs", "crates/typst-eval/src/", "crates/typst-library/src/"],
+        "guide": ".agents/areas/evaluation.md",
+        "required_checks": ["cargo test -p typst-eval -p typst-library", "cargo agent verify --tier pr --base main"],
+        "invariant_ids": ["eval-pure-world", "eval-deterministic"]
+      },
+      {
+        "id": "layout",
+        "path_prefixes": ["crates/typst/", "crates/typst-layout/", "crates/typst-realize/"],
+        "exact_paths": [],
+        "authority_sources": ["crates/typst/src/", "crates/typst-layout/src/", "crates/typst-realize/src/", "tests/src/tests.rs"],
+        "guide": ".agents/areas/layout.md",
+        "required_checks": ["cargo test -p typst -p typst-layout -p typst-realize", "cargo testit"],
+        "invariant_ids": ["layout-introspection", "layout-incremental"]
+      },
+      {
+        "id": "ide",
+        "path_prefixes": ["crates/typst-ide/"],
+        "exact_paths": [],
+        "authority_sources": ["crates/typst-ide/src/", "crates/typst-syntax/src/span.rs"],
+        "guide": ".agents/areas/ide.md",
+        "required_checks": ["cargo test -p typst-ide"],
+        "invariant_ids": ["ide-span-contract"]
+      },
+      {
+        "id": "cli",
+        "path_prefixes": ["crates/typst-cli/"],
+        "exact_paths": [],
+        "authority_sources": ["crates/typst-cli/src/", "crates/typst-cli/tests/"],
+        "guide": ".agents/areas/cli.md",
+        "required_checks": ["cargo test -p typst-cli", "cargo agent policy-check"],
+        "invariant_ids": ["cli-no-network-default", "cli-agent-name"]
+      },
+      {
+        "id": "output",
+        "path_prefixes": ["crates/typst-pdf/", "crates/typst-render/", "crates/typst-svg/"],
+        "exact_paths": [],
+        "authority_sources": ["crates/typst-pdf/src/", "crates/typst-render/src/", "crates/typst-svg/src/", "tests/src/tests.rs"],
+        "guide": ".agents/areas/output.md",
+        "required_checks": ["cargo test -p typst-pdf -p typst-render -p typst-svg", "cargo testit"],
+        "invariant_ids": ["output-escape", "output-reproducible"]
+      },
+      {
+        "id": "tests",
+        "path_prefixes": ["tests/"],
+        "exact_paths": [],
+        "authority_sources": ["tests/src/tests.rs", "tests/suite/", "tests/ref/"],
+        "guide": ".agents/areas/tests.md",
+        "required_checks": ["cargo testit", "cargo agent review-pack --base main"],
+        "invariant_ids": ["tests-reference-review"]
+      },
+      {
+        "id": "release",
+        "path_prefixes": [".github/", ".devcontainer/", "scripts/"],
+        "exact_paths": ["Dockerfile", "Dockerfile.agent-dev", "Cargo.toml", "Cargo.lock"],
+        "authority_sources": [".github/workflows/", "Dockerfile", "Cargo.toml", "scripts/"],
+        "guide": ".agents/areas/release.md",
+        "required_checks": ["cargo agent policy-check", "cargo agent upstream-check", "cargo agent release-manifest"],
+        "invariant_ids": ["release-provenance", "release-human-gate"]
+      },
+      {
+        "id": "agent-contract",
+        "path_prefixes": [".agents/", "agent-contract/", "crates/typst-agent-dev/"],
+        "exact_paths": ["AGENTS.md"],
+        "authority_sources": ["AGENTS.md", "agent-contract/v1/schema.json", ".agents/area-manifest.json", ".agents/invariants.yml"],
+        "guide": "AGENTS.md",
+        "required_checks": ["cargo test -p typst-agent-dev", "cargo agent eval"],
+        "invariant_ids": ["release-human-gate"]
+      }
+    ]
+  }
+}

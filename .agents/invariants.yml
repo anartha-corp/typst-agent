@@ -1,0 +1,128 @@
+version: 1
+records:
+  - id: syntax-parse-total
+    scope: crates/typst-syntax
+    statement: Parsing is total and diagnostics preserve source locations.
+    rationale: Editors and compiler recovery rely on stable error nodes.
+    authority_source: crates/typst-syntax/src
+    required_checks: [cargo test -p typst-syntax, cargo agent verify --tier pr]
+    review_prompts: [Does recovery preserve spans for malformed input?]
+    upstream_anchor: v0.15.1
+    upstream_sha: a51e028041cac426f97d34335bb01d8f1d8e5e8f
+  - id: syntax-span-stable
+    scope: crates/typst-syntax
+    statement: Span offsets refer to the original source and remain merge-safe.
+    rationale: Diagnostics, IDE actions, and incremental recompilation share spans.
+    authority_source: crates/typst-syntax/src/span.rs
+    required_checks: [cargo test -p typst-syntax]
+    review_prompts: [Are span transforms bounded and tested at EOF?]
+    upstream_anchor: v0.15.1
+    upstream_sha: a51e028041cac426f97d34335bb01d8f1d8e5e8f
+  - id: eval-pure-world
+    scope: crates/typst-eval
+    statement: Evaluation observes only the explicit World and never hidden network state.
+    rationale: Reproducibility and sandboxing depend on a narrow world boundary.
+    authority_source: crates/typst/src/world.rs
+    required_checks: [cargo test -p typst-eval]
+    review_prompts: [Is every external read represented by World?]
+    upstream_anchor: v0.15.1
+    upstream_sha: a51e028041cac426f97d34335bb01d8f1d8e5e8f
+  - id: eval-deterministic
+    scope: crates/typst-eval
+    statement: Pure evaluation is deterministic for equal source, inputs, and World.
+    rationale: Incremental caches and review evidence require repeatability.
+    authority_source: crates/typst-eval/src
+    required_checks: [cargo test -p typst-eval]
+    review_prompts: [Are clocks, randomness, and environment reads injected?]
+    upstream_anchor: v0.15.1
+    upstream_sha: a51e028041cac426f97d34335bb01d8f1d8e5e8f
+  - id: layout-introspection
+    scope: crates/typst-layout
+    statement: Layout introspection reports derive from the same realized document.
+    rationale: Introspection must not create a second semantic interpretation.
+    authority_source: crates/typst-layout/src
+    required_checks: [cargo test -p typst-layout]
+    review_prompts: [Does this change preserve query/result ordering and spans?]
+    upstream_anchor: v0.15.1
+    upstream_sha: a51e028041cac426f97d34335bb01d8f1d8e5e8f
+  - id: layout-incremental
+    scope: crates/typst
+    statement: Incremental compilation invalidates all affected dependencies.
+    rationale: Stale memoized values are correctness bugs, not only performance bugs.
+    authority_source: crates/typst/src
+    required_checks: [cargo test -p typst]
+    review_prompts: [Is the dependency edge represented in the comemo key?]
+    upstream_anchor: v0.15.1
+    upstream_sha: a51e028041cac426f97d34335bb01d8f1d8e5e8f
+  - id: ide-span-contract
+    scope: crates/typst-ide
+    statement: IDE edits and completions use source spans from syntax, never guessed offsets.
+    rationale: Wrong spans can corrupt user documents.
+    authority_source: crates/typst-ide/src
+    required_checks: [cargo test -p typst-ide]
+    review_prompts: [Are edits validated against current source text?]
+    upstream_anchor: v0.15.1
+    upstream_sha: a51e028041cac426f97d34335bb01d8f1d8e5e8f
+  - id: cli-no-network-default
+    scope: crates/typst-cli
+    statement: CLI compilation is local by default and network access is explicit.
+    rationale: A downstream compiler must remain safe in CI and offline builds.
+    authority_source: crates/typst-cli/src
+    required_checks: [cargo test -p typst-cli]
+    review_prompts: [Does a new path introduce an implicit network request?]
+    upstream_anchor: v0.15.1
+    upstream_sha: a51e028041cac426f97d34335bb01d8f1d8e5e8f
+  - id: cli-agent-name
+    scope: crates/typst-cli
+    statement: Published downstream executables identify as typst-agent and never claim upstream support.
+    rationale: Users must be able to distinguish the downstream at runtime.
+    authority_source: crates/typst-cli/Cargo.toml
+    required_checks: [cargo agent policy-check, cargo agent release-manifest]
+    review_prompts: [Does --version contain both downstream and upstream identity?]
+    upstream_anchor: v0.15.1
+    upstream_sha: a51e028041cac426f97d34335bb01d8f1d8e5e8f
+  - id: output-escape
+    scope: crates/typst-pdf
+    statement: Output encoders escape all untrusted document data for their target format.
+    rationale: Export injection is a security and correctness failure.
+    authority_source: crates/typst-pdf/src
+    required_checks: [cargo test -p typst-pdf]
+    review_prompts: [Are quotes, control bytes, and format delimiters covered?]
+    upstream_anchor: v0.15.1
+    upstream_sha: a51e028041cac426f97d34335bb01d8f1d8e5e8f
+  - id: output-reproducible
+    scope: crates/typst-render
+    statement: Identical inputs produce byte-stable outputs where the format promises reproducibility.
+    rationale: Release and reference evidence needs repeatable artifacts.
+    authority_source: crates/typst-render/src
+    required_checks: [cargo test -p typst-render]
+    review_prompts: [Are timestamps and platform-dependent ordering controlled?]
+    upstream_anchor: v0.15.1
+    upstream_sha: a51e028041cac426f97d34335bb01d8f1d8e5e8f
+  - id: tests-reference-review
+    scope: tests
+    statement: Reference images and hashes are evidence and require a human-approved report to change.
+    rationale: Baseline laundering can hide regressions.
+    authority_source: tests/src/tests.rs
+    required_checks: [cargo agent verify --tier pr, cargo agent review-pack --base main]
+    review_prompts: [Does the report explain the visual and invariant change?]
+    upstream_anchor: v0.15.1
+    upstream_sha: a51e028041cac426f97d34335bb01d8f1d8e5e8f
+  - id: release-provenance
+    scope: .github, scripts
+    statement: Every release records upstream SHA, downstream SHA, checksums, SBOM, and build provenance.
+    rationale: Consumers need to audit what was built and from which source.
+    authority_source: .github/workflows/release.yml
+    required_checks: [cargo agent release-manifest]
+    review_prompts: [Can a verifier reproduce the manifest without credentials?]
+    upstream_anchor: v0.15.1
+    upstream_sha: a51e028041cac426f97d34335bb01d8f1d8e5e8f
+  - id: release-human-gate
+    scope: .github
+    statement: Automation may prepare evidence but cannot merge or publish a release without human approval.
+    rationale: AI-assisted downstream changes need accountable release authority.
+    authority_source: GOVERNANCE.md
+    required_checks: [cargo agent policy-check]
+    review_prompts: [Are merge and release jobs protected by a human environment?]
+    upstream_anchor: v0.15.1
+    upstream_sha: a51e028041cac426f97d34335bb01d8f1d8e5e8f

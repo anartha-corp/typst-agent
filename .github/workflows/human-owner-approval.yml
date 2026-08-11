@@ -59,9 +59,17 @@ jobs:
             exit 1
           fi
 
+          # GITHUB_TOKEN has no repository-administration permission, so it
+          # cannot read branch protection. Keep the bootstrap check set
+          # versioned here and remove this workflow after PR #7 is merged.
           required_contexts="$(
-            gh api "repos/$REPOSITORY/branches/main/protection/required_status_checks" \
-              --jq '.contexts[]' | grep -Fvx 'Human owner approval' || true
+            printf '%s\n' \
+              'Tests' \
+              'Check clippy, formatting, and crate docs' \
+              'Check documentation (website and PDF)' \
+              'Check minimum Rust version' \
+              'Check fuzzers' \
+              'Check unsafe code'
           )"
           check_runs="$(
             gh api --paginate \

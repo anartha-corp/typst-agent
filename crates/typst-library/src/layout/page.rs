@@ -449,6 +449,29 @@ pub struct PageElem {
     #[ghost]
     pub footer_descent: Rel<Length>,
 
+    /// Whether to show the page's header and footer on empty pages.
+    ///
+    /// Pages whose body contains no content are considered empty, for
+    /// instance those inserted by `pagebreak(to: "even" | "odd")` or a
+    /// trailing page after a `pagebreak(weak: false)`. The page's background
+    /// and foreground are always shown, and the page counter continues to
+    /// count empty pages, so page numbers remain correct on later pages.
+    ///
+    /// ```example
+    /// #set page(
+    ///   height: 3cm,
+    ///   margin: (top: 1cm, bottom: 0.5cm),
+    ///   marginals: "hide-empty",
+    ///   header: [HEADER],
+    /// )
+    ///
+    /// #pagebreak(to: "even")
+    /// #lorem(20)
+    /// ```
+    #[default(Marginals::Always)]
+    #[ghost]
+    pub marginals: Marginals,
+
     /// Content in the page's background.
     ///
     /// This content will be placed behind the page's body. It can be used to
@@ -801,6 +824,17 @@ pub enum Parity {
     Even,
     /// Next page will be an odd page.
     Odd,
+}
+
+/// Whether to show the page's header and footer on empty pages.
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq, Hash, Cast)]
+pub enum Marginals {
+    /// Show the header and footer on every page.
+    #[default]
+    Always,
+    /// Hide the header and footer on otherwise empty pages, like those
+    /// inserted by `pagebreak(to: "even" | "odd")`.
+    HideEmpty,
 }
 
 impl Parity {

@@ -7,6 +7,11 @@ on:
         description: Exact immutable downstream release tag
         required: true
         type: string
+      resume:
+        description: Resume an interrupted publication without recreating immutable objects
+        required: false
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -337,6 +342,9 @@ jobs:
         uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
       - name: Install Cosign
         uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
+        with:
+          # cosign v3 removed the --bundle flag; pin the last v2 line.
+          cosign-release: v2.6.0
       - name: Configure source authority and agentctl evidence
         shell: bash
         run: |
@@ -402,6 +410,9 @@ jobs:
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - name: Install Cosign
         uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
+        with:
+          # cosign v3 removed the --bundle flag; pin the last v2 line.
+          cosign-release: v2.6.0
       - name: Set up Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
       - name: Log in to GHCR
@@ -455,12 +466,31 @@ jobs:
         id: draft
         env:
           GH_TOKEN: ${{ github.token }}
+          RESUME: ${{ inputs.resume }}
         shell: bash
         run: |
           set -euo pipefail
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           compiler="ghcr.io/$owner/typst-agent"
           dev="ghcr.io/$owner/typst-agent-dev"
+          if [[ "$RESUME" == true ]]; then
+            # Interrupted publication: require the existing immutable objects,
+            # verify their identity against the exact dispatch commit, and
+            # reuse them. Nothing is recreated, moved, or overwritten.
+            tag_sha="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG^{}" | awk '{print $1}')"
+            test -n "$tag_sha"
+            test "$tag_sha" = "$GITHUB_SHA"
+            draft="$(gh release view "$RELEASE_TAG" --json id,isDraft,targetCommitish)"
+            test "$(jq -er .isDraft <<<"$draft")" = true
+            test "$(jq -er .targetCommitish <<<"$draft")" = "$GITHUB_SHA"
+            for ref in \
+              "$compiler:$RELEASE_TAG" "$compiler:$RELEASE_TAG-amd64" "$compiler:$RELEASE_TAG-arm64" \
+              "$dev:$RELEASE_TAG" "$dev:$RELEASE_TAG-amd64" "$dev:$RELEASE_TAG-arm64"; do
+              docker buildx imagetools inspect "$ref" >/dev/null
+            done
+            echo "release_id=$(jq -er .id <<<"$draft")" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           test -z "$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "release already exists: $RELEASE_TAG" >&2
@@ -490,35 +520,44 @@ jobs:
           git push origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
       - name: Push immutable multi-platform images
         id: publish-images
+        env:
+          RESUME: ${{ inputs.resume }}
         shell: bash
         run: |
           set -euo pipefail
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           release_root=.tmp/agent/release
-          publish_image() {
-            local kind="$1"
-            local local_repository="$2"
-            local remote_repository="$3"
-            local arch archive local_ref remote_ref
-            for arch in amd64 arm64; do
-              archive="$release_root/artifacts/typst-agent-$kind-linux-$arch.docker.tar"
-              docker load --input "$archive" >&2
-              local_ref="$local_repository:prepared-linux-$arch"
-              remote_ref="$remote_repository:$RELEASE_TAG-$arch"
-              docker tag "$local_ref" "$remote_ref"
-              docker push "$remote_ref" >&2
-            done
-            docker buildx imagetools create \
-              --tag "$remote_repository:$RELEASE_TAG" \
-              "$remote_repository:$RELEASE_TAG-amd64" \
-              "$remote_repository:$RELEASE_TAG-arm64" >&2
-            docker buildx imagetools inspect "$remote_repository:$RELEASE_TAG" \
-              | awk '$1 == "Digest:" {print $2; exit}'
-          }
           compiler_ref="ghcr.io/$owner/typst-agent"
           dev_ref="ghcr.io/$owner/typst-agent-dev"
-          compiler_digest="$(publish_image compiler typst-agent-compiler "$compiler_ref")"
-          dev_digest="$(publish_image dev typst-agent-dev "$dev_ref")"
+          if [[ "$RESUME" == true ]]; then
+            compiler_digest="$(docker buildx imagetools inspect "$compiler_ref:$RELEASE_TAG" \
+              | awk '$1 == "Digest:" {print $2; exit}')"
+            dev_digest="$(docker buildx imagetools inspect "$dev_ref:$RELEASE_TAG" \
+              | awk '$1 == "Digest:" {print $2; exit}')"
+          else
+            publish_image() {
+              local kind="$1"
+              local local_repository="$2"
+              local remote_repository="$3"
+              local arch archive local_ref remote_ref
+              for arch in amd64 arm64; do
+                archive="$release_root/artifacts/typst-agent-$kind-linux-$arch.docker.tar"
+                docker load --input "$archive" >&2
+                local_ref="$local_repository:prepared-linux-$arch"
+                remote_ref="$remote_repository:$RELEASE_TAG-$arch"
+                docker tag "$local_ref" "$remote_ref"
+                docker push "$remote_ref" >&2
+              done
+              docker buildx imagetools create \
+                --tag "$remote_repository:$RELEASE_TAG" \
+                "$remote_repository:$RELEASE_TAG-amd64" \
+                "$remote_repository:$RELEASE_TAG-arm64" >&2
+              docker buildx imagetools inspect "$remote_repository:$RELEASE_TAG" \
+                | awk '$1 == "Digest:" {print $2; exit}'
+            }
+            compiler_digest="$(publish_image compiler typst-agent-compiler "$compiler_ref")"
+            dev_digest="$(publish_image dev typst-agent-dev "$dev_ref")"
+          fi
           [[ "$compiler_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "$dev_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           {

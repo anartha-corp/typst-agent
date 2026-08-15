@@ -23,6 +23,14 @@ publishes the GitHub release only after all other writes succeed. A partial
 failure therefore leaves the release draft; the tag is never moved and a
 versioned container tag is never overwritten.
 
+A partial failure after the draft, tag, and versioned image digests exist can
+be resumed from the same `main` commit by dispatching with `resume: true`.
+Resume re-verifies that the tag, draft, and all six versioned image refs exist
+and point at the exact dispatch commit, reuses them without recreating or
+overwriting anything, and continues with signing, attestation, asset upload,
+aliasing, and publication. If the objects belong to a different commit, resume
+fails loudly instead of mixing provenance.
+
 GitHub creates the first organization-scoped container package as private. On
 the first release only, the approved publication job pushes bounded
 `visibility-bootstrap` aliases before it creates the release tag, prints the

@@ -100,9 +100,17 @@ jq -s '.' "$tmp/not-planned.ndjson" > "$out/closed-not-planned.json"
 
 # ---- issue details for the scoring snapshot --------------------------------
 log "collecting issue details"
+if [[ -f "$root/.agents/backlog/registry.toml" ]]; then
+    grep -oE '^number = [0-9]+' "$root/.agents/backlog/registry.toml" \
+        | grep -oE '[0-9]+' \
+        | jq -R -s 'split("\n") | map(select(length > 0) | {number: tonumber})' \
+        > "$tmp/registry-ids.json"
+else
+    printf '[]\n' > "$tmp/registry-ids.json"
+fi
 jq -s 'map(.[].number) | unique | sort' \
     "$tmp/by-reactions.json" "$tmp/by-comments.json" "$tmp/bugs.json" \
-    "$tmp"/label-*.json > "$tmp/ids.json"
+    "$tmp"/label-*.json "$tmp/registry-ids.json" > "$tmp/ids.json"
 ids="$(jq -r '.[]' "$tmp/ids.json")"
 issue_count="$(jq 'length' "$tmp/ids.json")"
 

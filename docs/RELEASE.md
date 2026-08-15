@@ -17,10 +17,19 @@ gate is opened.
 
 The publication job is protected by the `release-human-approval` environment.
 It refuses a moved source commit, an existing mismatched tag, or an existing
-versioned image digest. It creates a draft first, pushes immutable versioned
-objects, attaches attestations, and publishes the GitHub release only after all
-other writes succeed. A partial failure therefore leaves the release draft;
-the tag is never moved and a versioned container tag is never overwritten.
+versioned image digest. After any first-release visibility bootstrap, it creates
+a draft, pushes immutable versioned objects, attaches attestations, and
+publishes the GitHub release only after all other writes succeed. A partial
+failure therefore leaves the release draft; the tag is never moved and a
+versioned container tag is never overwritten.
+
+GitHub creates the first organization-scoped container package as private. On
+the first release only, the approved publication job pushes bounded
+`visibility-bootstrap` aliases before it creates the release tag, prints the
+two package-settings URLs, and waits up to 30 minutes for an organization owner
+to make both packages public. Later releases verify the public aliases without
+waiting. Successful publication repoints the bootstrap aliases to the final
+multi-platform image digests.
 
 No release job has a credential or remote capable of writing to `typst/typst`.
 An incomplete, null, or placeholder manifest is a failed release, not a warning.

@@ -13,15 +13,31 @@ case "$builder" in
   *) echo "builder must be cargo or cross" >&2; exit 2 ;;
 esac
 
-first="$(mktemp -d "${TMPDIR:-/tmp}/typst-agent-build-a.XXXXXX")"
-second="$(mktemp -d "${TMPDIR:-/tmp}/typst-agent-build-b.XXXXXX")"
-cleanup() { rm -rf -- "$first" "$second"; }
+suffix=""
+[[ "$target" == *windows* ]] && suffix=".exe"
+scratch_root=".tmp/agent/reproducible-build/$target"
+target_dir="$scratch_root/target"
+first_bin_copy="$scratch_root/typst-agent-first$suffix"
+cleanup() { rm -rf -- "$scratch_root"; }
 trap cleanup EXIT
+rm -rf -- "$scratch_root"
+mkdir -p "$scratch_root"
 
 source_date_epoch="$(git show -s --format=%ct HEAD)"
 downstream_sha="$(git rev-parse HEAD)"
 export SOURCE_DATE_EPOCH="$source_date_epoch"
 export TYPST_AGENT_COMMIT_SHA="$downstream_sha"
+
+# MSVC's linker otherwise writes time-dependent data into the PE image. Rust's
+# own reproducible-build test uses /Brepro for Windows MSVC targets for the same
+# reason. The target directory is deleted between builds below, which also
+# removes the PDB that link.exe must not reuse.
+if [[ "$target" == *-pc-windows-msvc ]]; then
+  export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-Clink-arg=/Brepro"
+  # Git Bash converts slash-prefixed values in environment variables before
+  # launching native Windows programs. Keep /Brepro intact for Cargo/rustc.
+  export MSYS2_ENV_CONV_EXCL="RUSTFLAGS${MSYS2_ENV_CONV_EXCL:+;$MSYS2_ENV_CONV_EXCL}"
+fi
 
 build_once() {
   local target_dir="$1"
@@ -30,14 +46,9 @@ build_once() {
     --target "$target" --features "$features"
 }
 
-build_once "$first"
-build_once "$second"
-
-suffix=""
-[[ "$target" == *windows* ]] && suffix=".exe"
-first_bin="$first/$target/release/typst-agent$suffix"
-second_bin="$second/$target/release/typst-agent$suffix"
-test -f "$first_bin" -a -f "$second_bin"
+build_once "$target_dir"
+first_bin="$target_dir/$target/release/typst-agent$suffix"
+test -f "$first_bin"
 
 sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -48,11 +59,21 @@ sha256_file() {
 }
 
 first_sha="$(sha256_file "$first_bin")"
+cp "$first_bin" "$first_bin_copy"
+rm -rf -- "$target_dir"
+build_once "$target_dir"
+second_bin="$target_dir/$target/release/typst-agent$suffix"
+test -f "$second_bin"
 second_sha="$(sha256_file "$second_bin")"
-test "$first_sha" = "$second_sha"
+if [[ "$first_sha" != "$second_sha" ]]; then
+  printf \
+    'non-reproducible binary for %s: first_sha256=%s second_sha256=%s\n' \
+    "$target" "$first_sha" "$second_sha" >&2
+  exit 4
+fi
 
 mkdir -p "$output_dir"
-cp "$first_bin" "$output_dir/typst-agent$suffix"
+cp "$first_bin_copy" "$output_dir/typst-agent$suffix"
 printf \
   '{"target":"%s","first_sha256":"%s","second_sha256":"%s","identical":true}\n' \
   "$target" "$first_sha" "$second_sha" \

@@ -1,0 +1,5 @@
+[build.env]
+passthrough = [
+  "SOURCE_DATE_EPOCH",
+  "TYPST_AGENT_COMMIT_SHA",
+]

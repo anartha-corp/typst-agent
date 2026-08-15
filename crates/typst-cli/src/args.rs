@@ -834,9 +834,8 @@ fn output_value_parser() -> impl TypedValueParser<Value = Output> {
 /// "a value is required" (upstream issue #6183). Empty paths are filtered out
 /// when the fonts are discovered.
 fn font_path_value_parser() -> impl TypedValueParser<Value = PathBuf> {
-    clap::builder::OsStringValueParser::new().try_map(|value| -> Result<_, clap::Error> {
-        Ok(PathBuf::from(value))
-    })
+    clap::builder::OsStringValueParser::new()
+        .try_map(|value| -> Result<_, clap::Error> { Ok(PathBuf::from(value)) })
 }
 
 /// Parses key/value pairs split by the first equal sign.

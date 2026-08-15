@@ -1479,7 +1479,8 @@ fn days_since(earlier: &str, later: &str) -> Option<i64> {
     let (early_year, early_month, early_day) = ymd(earlier)?;
     let (late_year, late_month, late_day) = ymd(later)?;
     let ordinal = |year: i64, month: u32, day: u32| -> i64 {
-        let mut total = year * 365 + year.div_euclid(4) - year.div_euclid(100) + year.div_euclid(400);
+        let mut total =
+            year * 365 + year.div_euclid(4) - year.div_euclid(100) + year.div_euclid(400);
         let cumulative = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
         total += i64::from(cumulative[(month - 1) as usize]) + i64::from(day);
         if month > 2 && year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
@@ -1487,7 +1488,10 @@ fn days_since(earlier: &str, later: &str) -> Option<i64> {
         }
         total
     };
-    Some(ordinal(late_year, late_month, late_day) - ordinal(early_year, early_month, early_day))
+    Some(
+        ordinal(late_year, late_month, late_day)
+            - ordinal(early_year, early_month, early_day),
+    )
 }
 
 fn backlog(args: &BacklogArgs) -> AppResult<Value> {
@@ -1504,29 +1508,37 @@ fn backlog(args: &BacklogArgs) -> AppResult<Value> {
                 error
             ))
         })?;
-        serde_json::from_str(&text)
-            .map_err(|error| AppError::invalid(format!("backlog snapshot {name} is not JSON: {error}")))
+        serde_json::from_str(&text).map_err(|error| {
+            AppError::invalid(format!("backlog snapshot {name} is not JSON: {error}"))
+        })
     };
     let parse = |name: &str| -> AppResult<Value> { read_json(name) };
 
-    let provenance: SnapshotProvenance = serde_json::from_value(parse("provenance.json")?)
-        .map_err(|error| AppError::invalid(format!("invalid backlog provenance: {error}")))?;
+    let provenance: SnapshotProvenance =
+        serde_json::from_value(parse("provenance.json")?).map_err(|error| {
+            AppError::invalid(format!("invalid backlog provenance: {error}"))
+        })?;
     let issues: Vec<SnapshotIssue> = serde_json::from_value(parse("issues.json")?)
         .map_err(|error| AppError::invalid(format!("invalid backlog issues: {error}")))?;
     let pulls: Vec<SnapshotPull> = serde_json::from_value(parse("pulls.json")?)
         .map_err(|error| AppError::invalid(format!("invalid backlog pulls: {error}")))?;
     let not_planned: Vec<SnapshotNotPlanned> =
-        serde_json::from_value(parse("closed-not-planned.json")?)
-            .map_err(|error| AppError::invalid(format!("invalid backlog not-planned: {error}")))?;
+        serde_json::from_value(parse("closed-not-planned.json")?).map_err(|error| {
+            AppError::invalid(format!("invalid backlog not-planned: {error}"))
+        })?;
 
     let registry: RegistryFile = toml::from_str(&read_semantic_text(&registry_path)?)
-        .map_err(|error| AppError::invalid(format!("invalid backlog registry: {error}")))?;
+        .map_err(|error| {
+            AppError::invalid(format!("invalid backlog registry: {error}"))
+        })?;
     if registry.version != 1 {
         return Err(AppError::invalid("backlog registry must have version 1"));
     }
 
-    let demand_by_number =
-        issues.iter().map(|issue| (issue.number, issue)).collect::<BTreeMap<_, _>>();
+    let demand_by_number = issues
+        .iter()
+        .map(|issue| (issue.number, issue))
+        .collect::<BTreeMap<_, _>>();
     let not_planned_set =
         not_planned.iter().map(|entry| entry.number).collect::<BTreeSet<_>>();
 
@@ -1595,8 +1607,13 @@ fn backlog(args: &BacklogArgs) -> AppResult<Value> {
             continue;
         }
 
-        let score =
-            backlog_score(demand, issue.confidence, issue.safety, issue.impact, issue.burden);
+        let score = backlog_score(
+            demand,
+            issue.confidence,
+            issue.safety,
+            issue.impact,
+            issue.burden,
+        );
         let tier = backlog_tier(score);
         let entry = BacklogEntry {
             reference,
@@ -1643,9 +1660,15 @@ fn backlog(args: &BacklogArgs) -> AppResult<Value> {
         }
     }
 
-    tier_a.sort_by(|left, right| right.score.cmp(&left.score).then(left.number.cmp(&right.number)));
-    tier_b.sort_by(|left, right| right.score.cmp(&left.score).then(left.number.cmp(&right.number)));
-    tier_c.sort_by(|left, right| right.score.cmp(&left.score).then(left.number.cmp(&right.number)));
+    tier_a.sort_by(|left, right| {
+        right.score.cmp(&left.score).then(left.number.cmp(&right.number))
+    });
+    tier_b.sort_by(|left, right| {
+        right.score.cmp(&left.score).then(left.number.cmp(&right.number))
+    });
+    tier_c.sort_by(|left, right| {
+        right.score.cmp(&left.score).then(left.number.cmp(&right.number))
+    });
     excluded.sort_by(|left, right| left.number.cmp(&right.number));
     tier_a.truncate(20);
     tier_b.truncate(40);

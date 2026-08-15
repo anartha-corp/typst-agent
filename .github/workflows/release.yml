@@ -343,8 +343,10 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
         with:
-          # cosign v3 removed the --bundle flag; pin the last v2 line.
-          cosign-release: v2.6.0
+          # Pin the exact bootstrap-verified release; the installer's default
+          # drifts. v3 removed `sign --bundle`, so the signing step writes
+          # detached outputs and assembles the bundle itself.
+          cosign-release: v3.0.2
       - name: Configure source authority and agentctl evidence
         shell: bash
         run: |
@@ -411,8 +413,10 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
         with:
-          # cosign v3 removed the --bundle flag; pin the last v2 line.
-          cosign-release: v2.6.0
+          # Pin the exact bootstrap-verified release; the installer's default
+          # drifts. v3 removed `sign --bundle`, so the signing step writes
+          # detached outputs and assembles the bundle itself.
+          cosign-release: v3.0.2
       - name: Set up Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
       - name: Log in to GHCR
@@ -573,9 +577,26 @@ jobs:
           evidence_dir=.tmp/agent/release/evidence
           compiler_bundle="$evidence_dir/compiler-image.sigstore.json"
           dev_bundle="$evidence_dir/dev-image.sigstore.json"
-          cosign sign --yes --bundle "$compiler_bundle" \
+          # cosign v2.2+ removed `sign --bundle`; write the detached signature
+          # and certificate and assemble the Sigstore v0.3 bundle ourselves so
+          # downstream `cosign verify --bundle` keeps working.
+          sign_image() {
+            local bundle="$1"
+            local subject="$2"
+            cosign sign --yes \
+              --output-signature "$bundle.sig" \
+              --output-certificate "$bundle.crt" \
+              "$subject"
+            jq -n \
+              --arg media_type 'application/vnd.dev.sigstore.bundle+json;version=0.3' \
+              --arg cert "$(base64 -w0 "$bundle.crt")" \
+              --arg sig "$(base64 -w0 "$bundle.sig")" \
+              '{mediaType:$media_type,verificationMaterial:{certificate:{rawBytes:$cert}},messageSignature:{signature:$sig}}' \
+              > "$bundle"
+          }
+          sign_image "$compiler_bundle" \
             '${{ steps.publish-images.outputs.compiler_ref }}@${{ steps.publish-images.outputs.compiler_digest }}'
-          cosign sign --yes --bundle "$dev_bundle" \
+          sign_image "$dev_bundle" \
             '${{ steps.publish-images.outputs.dev_ref }}@${{ steps.publish-images.outputs.dev_digest }}'
           jq \
             --arg compiler_bundle "$compiler_bundle" \

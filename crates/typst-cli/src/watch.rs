@@ -9,7 +9,7 @@ use typst::utils::format_duration;
 use typst_kit::timer::Timer;
 use typst_kit::watcher::Watcher;
 
-use crate::args::{Input, Output, WatchCommand};
+use crate::args::{DiagnosticFormat, Input, Output, WatchCommand};
 use crate::compile::{CompileConfig, compile_once, print_diagnostics};
 use crate::world::{SystemWorld, WorldCreationError};
 use crate::{print_error, terminal};
@@ -40,8 +40,10 @@ pub fn watch(command: &'static WatchCommand) -> HintedStrResult<()> {
                 | WorldCreationError::RootNotFound(ref path)),
             ) => {
                 watcher.update([path.clone()])?;
-                Status::Error.print(&config).unwrap();
-                print_error(&err.to_string()).unwrap();
+                if config.diagnostic_format != DiagnosticFormat::Json {
+                    Status::Error.print(&config).unwrap();
+                }
+                print_error(&err.to_string(), &[]).unwrap();
                 watcher.wait()?;
             }
             Err(err) => return Err(err.into()),

@@ -373,9 +373,10 @@ fn get_vars() -> StrResult<Environment> {
             Err(VarError::NotPresent) => Ok(None),
             Err(VarError::NotUnicode(_)) => {
                 crate::set_failed();
-                crate::print_error(&format!(
-                    "the environment variable `{key}` was not valid UTF-8"
-                ))
+                crate::print_error(
+                    &format!("the environment variable `{key}` was not valid UTF-8"),
+                    &[],
+                )
                 .map_err(|e| eco_format!("{e}"))?;
                 Ok(None)
             }
@@ -414,9 +415,12 @@ fn parse_bool(cmd: &Command, val: &str, key: &'static str) -> Option<bool> {
     match BoolValueParser::new().parse_ref(cmd, None, val.as_ref()) {
         Ok(bool) => Some(bool),
         Err(_) => {
-            crate::print_error(&format!(
-                "invalid value `{val}` for `{key}`, expected `true` or `false`."
-            ))
+            crate::print_error(
+                &format!(
+                    "invalid value `{val}` for `{key}`, expected `true` or `false`."
+                ),
+                &[],
+            )
             .map_err(|e| eco_format!("{e}"))
             .expect("failed to print error");
             None
@@ -437,7 +441,7 @@ fn parse_features(feature_list: &str) -> StrResult<Features> {
                 Feature::A11yExtras => features.a11y_extras = true,
             },
             Err(_) => {
-                crate::print_error(&format!("unknown runtime feature: `{feature}`"))
+                crate::print_error(&format!("unknown runtime feature: `{feature}`"), &[])
                     .map_err(|e| eco_format!("{e}"))?;
             }
         }

@@ -12,7 +12,13 @@ license = { workspace = true }
 readme = { workspace = true }
 
 [[bin]]
-name = "typst-agent"
+# Deliberately not named `typst-agent`: the published CLI compiler in
+# `typst-cli` owns that bin name. Sharing it makes
+# `target/{debug,release}/typst-agent` order-dependent and breaks the CLI
+# smoke tests whenever both packages are built in one verification run.
+# `cargo agent` and the eval harness reach this binary through the package
+# or its own path, never by name.
+name = "typst-agent-ctl"
 path = "src/main.rs"
 
 [dependencies]

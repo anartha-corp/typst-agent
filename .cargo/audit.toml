@@ -1,0 +1,19 @@
+# cargo-audit configuration for the downstream workspace.
+#
+# `cargo audit` (see `.github/workflows/nightly.yml`) fails the nightly gate on
+# vulnerabilities and reports unmaintained crates as warnings. The two ignored
+# advisories below are transient: both are reachable only through
+# `citationberg 0.7.0` (the newest release), which pins `quick-xml ^0.38.1`, so
+# the workspace cannot move to the patched `quick-xml >= 0.41.0` until
+# upstream citationberg releases a compatible version. Neither parser sees
+# network or untrusted input in typst-agent: quick-xml is used only for CSL
+# citation-style files and syntax-definition plists loaded from the local
+# project. Re-evaluate and remove these ignores when citationberg is updated.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2026-0194: quick-xml quadratic duplicate-attribute scan.
+    "RUSTSEC-2026-0194",
+    # RUSTSEC-2026-0195: quick-xml NsReader namespace-allocation growth.
+    "RUSTSEC-2026-0195",
+]

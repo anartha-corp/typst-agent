@@ -46,6 +46,7 @@ c187a1561a383b606f4a983e84d4100c block-box-fill
 72a5a7db8befa759f88995c2d32d2ea6 block-clip-text
 fbd3d4ceada48ba36542f5e3afb48c45 block-clipping-multiple-pages
 f5ff1f143a7a6f26353fcaac0c017a9a block-consistent-width
+a93fbe1d1eb01d1936649ae92ec054c6 block-continuation
 b28568a31135693ca7c0bf15586901e4 block-fixed-height
 e87e5cb02dae543b42bcb85776a8467d block-fr-height
 411951218cc68f200d4bcf2ca5e267c9 block-fr-height-auto-width
@@ -233,6 +234,8 @@ f22e450cf38679a8e30c9e447503bd70 figure-basic
 474c6e27fe73518ef241e99e140b72e3 figure-caption-separator
 2a12267d33513493dc9b1382554f451a figure-caption-show
 cc98f56bc5cfeef0070100aba9a7a5da figure-caption-where-selector
+c312f74ad9cdb5b2711532dd8adcea77 figure-continuation-block
+7efb0a897493bc0784b30413e67cf0d1 figure-continuation-table
 531d0a4acd74b9cbc5ebe7679e6b8384 figure-localization-el
 f01f0ab606435a3db8b2c53ca1eecef5 figure-localization-fr
 0a8f535188cef7d7296e28119e32e49d figure-localization-ru

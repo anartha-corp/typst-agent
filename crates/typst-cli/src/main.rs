@@ -26,11 +26,11 @@ use clap::Parser;
 use clap::error::ErrorKind;
 use codespan_reporting::term;
 use codespan_reporting::term::termcolor::WriteColor;
-use ecow::eco_format;
+use ecow::{EcoString, eco_format};
 use serde::Serialize;
 use typst::diag::{HintedStrResult, StrResult};
 
-use crate::args::{CliArguments, Command, SerializationFormat};
+use crate::args::{CliArguments, Command, DiagnosticFormat, SerializationFormat};
 
 thread_local! {
     /// The CLI's exit code.
@@ -57,10 +57,7 @@ fn main() -> ExitCode {
 
     if let Err(msg) = res {
         set_failed();
-        print_error(msg.message()).expect("failed to print error");
-        for hint in msg.hints() {
-            print_hint(hint).expect("failed to print hint");
-        }
+        print_error(msg.message(), msg.hints()).expect("failed to print error");
     }
 
     EXIT.with(|cell| cell.get())
@@ -87,28 +84,35 @@ fn set_failed() {
     EXIT.with(|cell| cell.set(ExitCode::FAILURE));
 }
 
-/// Print an application-level error (independent from a source file).
-fn print_error(msg: &str) -> io::Result<()> {
+/// Print an application-level error (independent from a source file), plus
+/// its hints.
+///
+/// In JSON diagnostic format, the error and its hints are emitted as a JSON
+/// array on a single line so that standard error only ever contains JSON.
+fn print_error(message: &str, hints: &[EcoString]) -> io::Result<()> {
+    if ARGS.diagnostic_format() == DiagnosticFormat::Json {
+        return typst_kit::diagnostics::emit_app_error_json(
+            &mut terminal::out(),
+            message,
+            hints,
+        );
+    }
+
     let styles = term::Styles::default();
 
     let mut output = terminal::out();
     output.set_color(&styles.header_error)?;
     write!(output, "error")?;
-
     output.reset()?;
-    writeln!(output, ": {msg}")
-}
+    writeln!(output, ": {message}")?;
 
-/// Print an application-level hint (independent from a source file).
-fn print_hint(msg: &str) -> io::Result<()> {
-    let styles = term::Styles::default();
-
-    let mut output = terminal::out();
-    output.set_color(&styles.header_help)?;
-    write!(output, "hint")?;
-
-    output.reset()?;
-    writeln!(output, ": {msg}")
+    for hint in hints {
+        output.set_color(&styles.header_help)?;
+        write!(output, "hint")?;
+        output.reset()?;
+        writeln!(output, ": {hint}")?;
+    }
+    Ok(())
 }
 
 /// Serialize data to the output format and convert the error to an

@@ -3,12 +3,14 @@
 #![cfg(feature = "emit-diagnostics")]
 
 use std::collections::HashMap;
-use std::io;
+use std::io::{self, Write};
 use std::ops::Range;
 
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::files::Files;
 use codespan_reporting::term;
+use ecow::EcoString;
+use serde::Serialize;
 use termcolor::{Color, ColorSpec, WriteColor};
 use typst_library::World;
 use typst_library::diag::{FileError, Severity, SourceDiagnostic, Tracepoint};
@@ -35,6 +37,8 @@ pub enum DiagnosticFormat {
     Human,
     /// Displays a short single-line diagnostic.
     Short,
+    /// Emits diagnostics as JSON on a single line.
+    Json,
 }
 
 /// Emits diagnostic messages to a writable, colorized output.
@@ -101,6 +105,145 @@ pub fn emit<'a>(
     Ok(())
 }
 
+/// Emits diagnostic messages as a JSON array to a writable stream.
+///
+/// Each call writes exactly one compact JSON array containing all diagnostics,
+/// followed by a newline. This makes each emission self-contained and gives
+/// consumers a stable line-based framing, e.g. in watch mode where each
+/// recompilation emits one line. An empty emission is written as `[]`.
+///
+/// The JSON schema is experimental and may change in minor releases.
+pub fn emit_json<'a>(
+    dest: &mut dyn Write,
+    world: &dyn DiagnosticWorld,
+    diagnostics: impl IntoIterator<Item = &'a SourceDiagnostic>,
+) -> io::Result<()> {
+    let mut files = WorldFiles { world, sources: HashMap::new() };
+
+    let diagnostics = diagnostics
+        .into_iter()
+        .map(|diagnostic| JsonDiagnostic {
+            severity: match diagnostic.severity {
+                Severity::Error => "error",
+                Severity::Warning => "warning",
+            },
+            message: diagnostic.message.clone(),
+            span: files.json_span(diagnostic.span),
+            hints: diagnostic
+                .hints
+                .iter()
+                .map(|hint| JsonHint {
+                    message: hint.v.clone(),
+                    span: files.json_span(hint.span),
+                })
+                .collect(),
+            trace: diagnostic
+                .trace
+                .iter()
+                .map(|point| {
+                    let (kind, name) = match &point.v {
+                        Tracepoint::Call(name) => ("call", name.clone()),
+                        Tracepoint::Show(name) => ("show", Some(name.clone())),
+                        Tracepoint::Import(name) => ("import", Some(name.clone())),
+                        Tracepoint::Include(name) => ("include", Some(name.clone())),
+                    };
+                    JsonTrace { kind, name, span: files.json_span(point.span) }
+                })
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+
+    serde_json::to_writer(&mut *dest, &diagnostics)?;
+    dest.write_all(b"\n")?;
+    // Flush eagerly so that watch-mode consumers see each emission even
+    // though the process stays alive.
+    dest.flush()?;
+    Ok(())
+}
+
+/// Emits an application-level error (independent from a source file) in the
+/// same JSON schema as [`emit_json`].
+///
+/// The error is emitted as a single-element array whose only diagnostic has a
+/// detached span, matching the representation of source diagnostics without a
+/// location.
+pub fn emit_app_error_json(
+    dest: &mut dyn Write,
+    message: &str,
+    hints: &[EcoString],
+) -> io::Result<()> {
+    let diagnostic = JsonDiagnostic {
+        severity: "error",
+        message: message.into(),
+        span: None,
+        hints: hints
+            .iter()
+            .map(|hint| JsonHint { message: hint.clone(), span: None })
+            .collect(),
+        trace: Vec::new(),
+    };
+
+    serde_json::to_writer(&mut *dest, &[diagnostic])?;
+    dest.write_all(b"\n")?;
+    dest.flush()?;
+    Ok(())
+}
+
+/// A diagnostic in the JSON format.
+#[derive(Debug, Serialize)]
+struct JsonDiagnostic {
+    severity: &'static str,
+    message: EcoString,
+    /// `None` when the diagnostic is not tied to any source location.
+    span: Option<JsonSpan>,
+    hints: Vec<JsonHint>,
+    trace: Vec<JsonTrace>,
+}
+
+/// A hint attached to a diagnostic in the JSON format.
+#[derive(Debug, Serialize)]
+struct JsonHint {
+    message: EcoString,
+    /// `None` when the hint is not tied to any source location.
+    span: Option<JsonSpan>,
+}
+
+/// A tracepoint in the JSON format.
+#[derive(Debug, Serialize)]
+struct JsonTrace {
+    kind: &'static str,
+    name: Option<EcoString>,
+    span: Option<JsonSpan>,
+}
+
+/// A source location in the JSON format.
+///
+/// Byte offsets are zero-based and count UTF-8 bytes. Lines and columns are
+/// one-based, matching the human output and rustc's JSON diagnostics, with
+/// columns counting Unicode characters. If a file cannot be read, only the
+/// fields that can be determined without its content are populated.
+#[derive(Debug, Serialize)]
+struct JsonSpan {
+    file: Option<String>,
+    start: Option<usize>,
+    end: Option<usize>,
+    line: Option<usize>,
+    column: Option<usize>,
+}
+
+impl JsonSpan {
+    /// A span whose file is known, but whose range cannot be determined.
+    fn file_only(file: String) -> Self {
+        Self {
+            file: Some(file),
+            start: None,
+            end: None,
+            line: None,
+            column: None,
+        }
+    }
+}
+
 /// Emits a tracepoint.
 fn emit_trace(
     dest: &mut dyn WriteColor,
@@ -165,6 +308,45 @@ impl WorldFiles<'_> {
             }
             DiagSpanKind::Range { id: _, range } => Some(range),
         }
+    }
+
+    /// Resolve a diagnostic span into a JSON-serializable location.
+    ///
+    /// Returns `None` for detached spans. The result is partial if the file
+    /// cannot be read.
+    fn json_span(&mut self, span: impl Into<DiagSpan>) -> Option<JsonSpan> {
+        // Determine the file and byte range of the span.
+        let (id, range) = match span.into().get() {
+            DiagSpanKind::Detached => return None,
+            DiagSpanKind::Number { id, num, sub_range } => {
+                let Some(source) = self.world.source(id).ok() else {
+                    return Some(JsonSpan::file_only(self.world.name(id)));
+                };
+                let Some(range) = source.range(num, sub_range) else {
+                    return Some(JsonSpan::file_only(self.world.name(id)));
+                };
+                self.sources.entry(id).or_insert(source);
+                (id, range)
+            }
+            DiagSpanKind::Range { id, range } => (id, range),
+        };
+
+        let file = self.world.name(id);
+        let lines = self.lines(id).ok();
+        let location = lines
+            .as_ref()
+            .and_then(|lines| lines.byte_to_line_column(range.start))
+            // Lines and columns are one-based, as in the human output and in
+            // rustc's JSON output.
+            .map(|(line, column)| (line + 1, column + 1));
+
+        Some(JsonSpan {
+            file: Some(file),
+            start: Some(range.start),
+            end: Some(range.end),
+            line: location.map(|(line, _)| line),
+            column: location.map(|(_, column)| column),
+        })
     }
 
     /// Lookup line metadata for a file by id. If a source file was remembered,

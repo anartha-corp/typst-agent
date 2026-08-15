@@ -7,7 +7,7 @@ use bumpalo::boxed::Box as BumpBox;
 use comemo::{Track, Tracked, TrackedMut};
 use typst_library::diag::{SourceResult, bail, warning};
 use typst_library::engine::{Engine, Route, Sink, Traced};
-use typst_library::foundations::{Packed, Resolve, Smart, StyleChain};
+use typst_library::foundations::{Content, Packed, Resolve, Smart, StyleChain};
 use typst_library::introspection::{
     Introspector, Location, Locator, LocatorLink, SplitLocator, Tag, TagElem,
 };
@@ -236,6 +236,7 @@ impl<'a> Collector<'a, '_, '_> {
         let align = styles.resolve(AlignElem::alignment);
         let alone = self.children.len() == 1;
         let sticky = elem.sticky.get(styles);
+        let continuation = elem.continuation.get_cloned(styles);
         let breakable = elem.breakable.get(styles);
         let fr = match elem.height.get(styles) {
             Sizing::Fr(fr) => Some(fr),
@@ -267,6 +268,7 @@ impl<'a> Collector<'a, '_, '_> {
                 align,
                 sticky,
                 alone,
+                continuation,
                 elem,
                 styles,
                 locator,
@@ -447,6 +449,8 @@ pub struct MultiChild<'a> {
     pub sticky: bool,
     alone: bool,
     elem: &'a Packed<BlockElem>,
+    /// Content to prepend to every fragment of the block after the first.
+    continuation: Option<Content>,
     styles: StyleChain<'a>,
     locator: Locator<'a>,
     cell: CachedCell<SourceResult<Fragment>>,
@@ -552,6 +556,41 @@ pub struct MultiSpill<'a, 'b> {
 }
 
 impl MultiSpill<'_, '_> {
+    /// Lays out the block's continuation prelude, if any, and returns its
+    /// frame together with the regions reduced by the prelude's height.
+    /// Lays out the block's continuation prelude, if any, and returns its
+    /// frame together with the regions reduced by the prelude's height.
+    ///
+    /// All region heights are reduced so that followup regions commit a
+    /// consistent backlog in [`MultiSpill::layout`].
+    pub fn prelude<'a, 'v>(
+        &self,
+        engine: &mut Engine,
+        regions: Regions<'a>,
+        backlog: &'v mut Vec<Abs>,
+    ) -> SourceResult<(Option<Frame>, Regions<'v>)>
+    where
+        'a: 'v,
+    {
+        let Some(continuation) = &self.multi.continuation else {
+            return Ok((None, regions));
+        };
+
+        let frame = super::layout_frame(
+            engine,
+            continuation,
+            self.multi.locator.relayout().split().next(&continuation.span()),
+            self.multi.styles,
+            Region::new(regions.size, Axes::new(true, false)),
+        )?;
+
+        let reduce = frame.height();
+        let regions = regions
+            .map(backlog, |size| Size::new(size.x, (size.y - reduce).max(Abs::zero())));
+
+        Ok((Some(frame), regions))
+    }
+
     /// Build the spill's frames given regions.
     pub fn layout(
         mut self,

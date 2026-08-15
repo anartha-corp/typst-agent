@@ -7,7 +7,7 @@ use bumpalo::boxed::Box as BumpBox;
 use comemo::{Track, Tracked, TrackedMut};
 use typst_library::diag::{SourceResult, bail, warning};
 use typst_library::engine::{Engine, Route, Sink, Traced};
-use typst_library::foundations::{Packed, Resolve, Smart, StyleChain};
+use typst_library::foundations::{Content, Packed, Resolve, Smart, StyleChain};
 use typst_library::introspection::{
     Introspector, Location, Locator, LocatorLink, SplitLocator, Tag, TagElem,
 };
@@ -191,19 +191,28 @@ impl<'a> Collector<'a, '_, '_> {
 
         // Determine whether to prevent widow and orphans.
         let len = lines.len();
-        let prevent_orphans =
-            costs.orphan() > Ratio::zero() && len >= 2 && !lines[1].is_empty();
-        let prevent_widows =
-            costs.widow() > Ratio::zero() && len >= 2 && !lines[len - 2].is_empty();
-        let prevent_all = len == 3 && prevent_orphans && prevent_widows;
+        let orphan_count = styles.get(ParElem::orphans).get();
+        let widow_count = styles.get(ParElem::widows).get();
+        let prevent_orphans = orphan_count >= 2
+            && costs.orphan() > Ratio::zero()
+            && len >= orphan_count
+            && lines[1..orphan_count].iter().all(|line| !line.is_empty());
+        let prevent_widows = widow_count >= 2
+            && costs.widow() > Ratio::zero()
+            && len >= widow_count
+            && lines[len - widow_count..len - 1].iter().all(|line| !line.is_empty());
+        // If the requirements overlap, the paragraph must move as a whole.
+        let prevent_all =
+            prevent_orphans && prevent_widows && len < orphan_count + widow_count;
 
         // Store the heights of lines at the edges because we'll potentially
         // need these later when `lines` is already moved.
         let height_at = |i| lines.get(i).map(Frame::height).unwrap_or_default();
-        let front_1 = height_at(0);
-        let front_2 = height_at(1);
-        let back_2 = height_at(len.saturating_sub(2));
-        let back_1 = height_at(len.saturating_sub(1));
+        let front = (0..orphan_count).map(height_at).sum::<Abs>();
+        let back = (0..widow_count)
+            .map(|i| height_at(len.saturating_sub(widow_count) + i))
+            .sum::<Abs>();
+        let total = (0..len).map(height_at).sum::<Abs>();
 
         for (i, frame) in lines.into_iter().enumerate() {
             if i > 0 {
@@ -211,15 +220,16 @@ impl<'a> Collector<'a, '_, '_> {
             }
 
             // To prevent widows and orphans, we require enough space for
-            // - all lines if it's just three
-            // - the first two lines if we're at the first line
-            // - the last two lines if we're at the second to last line
+            // - all lines if the requirements overlap
+            // - the first `orphans` lines if we're at the first line
+            // - the last `widows` lines if we're at the first line that
+            //   would otherwise be left alone
             let need = if prevent_all && i == 0 {
-                front_1 + leading + front_2 + leading + back_1
+                total + leading * (len - 1) as f64
             } else if prevent_orphans && i == 0 {
-                front_1 + leading + front_2
-            } else if prevent_widows && i >= 2 && i + 2 == len {
-                back_2 + leading + back_1
+                front + leading * (orphan_count - 1) as f64
+            } else if prevent_widows && !prevent_all && i + widow_count == len {
+                back + leading * (widow_count - 1) as f64
             } else {
                 frame.height()
             };
@@ -236,6 +246,7 @@ impl<'a> Collector<'a, '_, '_> {
         let align = styles.resolve(AlignElem::alignment);
         let alone = self.children.len() == 1;
         let sticky = elem.sticky.get(styles);
+        let continuation = elem.continuation.get_cloned(styles);
         let breakable = elem.breakable.get(styles);
         let fr = match elem.height.get(styles) {
             Sizing::Fr(fr) => Some(fr),
@@ -267,6 +278,7 @@ impl<'a> Collector<'a, '_, '_> {
                 align,
                 sticky,
                 alone,
+                continuation,
                 elem,
                 styles,
                 locator,
@@ -447,6 +459,8 @@ pub struct MultiChild<'a> {
     pub sticky: bool,
     alone: bool,
     elem: &'a Packed<BlockElem>,
+    /// Content to prepend to every fragment of the block after the first.
+    continuation: Option<Content>,
     styles: StyleChain<'a>,
     locator: Locator<'a>,
     cell: CachedCell<SourceResult<Fragment>>,
@@ -552,6 +566,41 @@ pub struct MultiSpill<'a, 'b> {
 }
 
 impl MultiSpill<'_, '_> {
+    /// Lays out the block's continuation prelude, if any, and returns its
+    /// frame together with the regions reduced by the prelude's height.
+    /// Lays out the block's continuation prelude, if any, and returns its
+    /// frame together with the regions reduced by the prelude's height.
+    ///
+    /// All region heights are reduced so that followup regions commit a
+    /// consistent backlog in [`MultiSpill::layout`].
+    pub fn prelude<'a, 'v>(
+        &self,
+        engine: &mut Engine,
+        regions: Regions<'a>,
+        backlog: &'v mut Vec<Abs>,
+    ) -> SourceResult<(Option<Frame>, Regions<'v>)>
+    where
+        'a: 'v,
+    {
+        let Some(continuation) = &self.multi.continuation else {
+            return Ok((None, regions));
+        };
+
+        let frame = super::layout_frame(
+            engine,
+            continuation,
+            self.multi.locator.relayout().split().next(&continuation.span()),
+            self.multi.styles,
+            Region::new(regions.size, Axes::new(true, false)),
+        )?;
+
+        let reduce = frame.height();
+        let regions = regions
+            .map(backlog, |size| Size::new(size.x, (size.y - reduce).max(Abs::zero())));
+
+        Ok((Some(frame), regions))
+    }
+
     /// Build the spill's frames given regions.
     pub fn layout(
         mut self,

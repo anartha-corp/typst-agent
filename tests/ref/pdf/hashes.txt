@@ -48,6 +48,7 @@ fbb1f26d0c0a84055509aec693c29938 bidi-whitespace-reset
 338400242c1a245a046e8b44c944be99 block-clip-text
 a5dab7c173fdb819ade5c8ea4fd46a0b block-clipping-multiple-pages
 8d2abd65bb9bf9ca5208a249e529a56c block-consistent-width
+fac680e895ff097f8903657d338625fb block-continuation
 e7ed294a63b54cab0ef81e148fc6e4d5 block-fixed-height
 d9de8dad1bb0d79d29f9d17f58c3a813 block-fr-height
 544af55db2cefc83cd4ae4c9bd2896a6 block-fr-height-auto-width
@@ -235,6 +236,8 @@ c8098dc21a16ff6bf5005b250f6ab8c7 figure-breakable
 08cd79423e97d44662d7d78003141c76 figure-caption-separator
 5d5042df6d8f0713d9f0e0fc2f37722c figure-caption-show
 e0291493864c1d3e1fcd0b5cf4a0b8b2 figure-caption-where-selector
+5da5b534f0ec84b1c9708470dc71c8cd figure-continuation-block
+1afcfa538b963d73716f0b30ebd65061 figure-continuation-table
 549c0c8ccf50b3fbea4dca25e378097a figure-localization-el
 ed01db1f3d4ce09594e0248281f7ce99 figure-localization-fr
 49cd15627997331e91bc37fedbb54c27 figure-localization-ru
@@ -1514,6 +1517,8 @@ d95885370057fafbec92bc6c78a19eef par-hanging-indent-rtl
 0e0bd10f5ca15dec4e7c8b17822c1357 par-hanging-indent-semantic
 d19daf798d5ad2500b0c4bd503523a69 par-leading-and-spacing
 493953ae135d1f8cd7a106b17c4da5bb par-metadata-after-trimmed-space
+4c84e2bd8419d65a031595f5a9131eda par-orphans-default
+0e9584513c53f8053c4a2231576c8974 par-orphans-one
 bdc6d86984d0182d1a47409cff68e327 par-semantic
 1a0df16bb4732c8430776d3b35e11b6f par-semantic-align
 62c49cd07b433999f933f96c7971e645 par-semantic-tag
@@ -1521,6 +1526,9 @@ a1bdb99a562d2db97dace81f9b42c711 par-show-children
 61c9dd3b4a1d2bbd774557a1fc16838e par-show-styles
 a64fdf9e65b08988b5332f472e0810bc par-spacing-and-first-line-indent
 c8dfdb306c5bfaef407e5d566743952b par-trailing-whitespace
+06c864458f63e6a576a2b60ec356f337 par-widows-default
+038ac68601f829eeb1430a9e70cde73e par-widows-one
+89c4ed712ba1554c335c57d1998836c5 par-widows-three
 3a1ed824e4aad2d224bf8b639543dbac parser-backtracking-destructuring-whitespace
 8feb968e768955c679562662c69c7ee0 pdf-validation-multiple-standards
 bf3e8999bb8e0e5b671dea8b92af3f16 place-basic

@@ -737,6 +737,22 @@ pub fn eval_closure(
     }
 
     // Ensure all arguments have been used.
+    //
+    // The "unexpected argument" error is annotated with the argument's span,
+    // which falls back to the function's span for compiler-generated
+    // arguments. In that case the message is misleading: the function was
+    // called with more arguments than it has parameters, as happens when a
+    // show rule or numbering callback is invoked with extra arguments, e.g.
+    // `heading(numbering: it => it)` (upstream issue #2102).
+    if let Some(arg) = args.items.first() {
+        if args.span == func.span() {
+            bail!(
+                arg.span,
+                "function received more arguments than it expected";
+                hint: "either add the missing parameters or an argument sink (`..args`)"
+            );
+        }
+    }
     args.finish()?;
 
     // Handle control flow.

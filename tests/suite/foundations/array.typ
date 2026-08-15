@@ -297,7 +297,8 @@
 #test((1, 2, 3, 4).fold(0, (s, x) => s + x), 10)
 
 --- array-fold-closure-without-params eval ---
-// Error: 20-22 unexpected argument
+// Error: 20-22 function received more arguments than it expected
+// Hint: 20-22 either add the missing parameters or an argument sink (`..args`)
 #(1, 2, 3).fold(0, () => none)
 
 --- array-sum eval ---
@@ -589,7 +590,8 @@
 #().reduce()
 
 --- array-reduce-unexpected-argument eval ---
-// Error: 19-21 unexpected argument
+// Error: 19-21 function received more arguments than it expected
+// Hint: 19-21 either add the missing parameters or an argument sink (`..args`)
 #(1, 2, 3).reduce(() => none)
 
 --- issue-6285-crashed-with-sorting-non-total-order eval ---

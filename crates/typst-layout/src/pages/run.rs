@@ -8,9 +8,9 @@ use typst_library::introspection::{
     Counter, CounterDisplayElem, CounterKey, Introspector, Locator, LocatorLink,
 };
 use typst_library::layout::{
-    Abs, AlignElem, Alignment, Axes, Binding, ColumnsElem, Dir, Frame, HAlignment,
-    Length, OuterVAlignment, PageElem, Paper, Region, Regions, Rel, Sides, Size,
-    VAlignment,
+    Abs, AlignElem, Alignment, Axes, Binding, ColumnsElem, Dir, Frame, FrameItem,
+    HAlignment, Length, Marginals, OuterVAlignment, PageElem, Paper, Region, Regions,
+    Rel, Sides, Size, VAlignment,
 };
 use typst_library::model::Numbering;
 use typst_library::pdf::ArtifactKind;
@@ -223,6 +223,14 @@ fn layout_page_run_impl(
     let background = background.clone().map(|b| b.artifact(ArtifactKind::Background));
 
     for inner in fragment {
+        // Determine whether the marginals (header and footer) should be
+        // hidden because the page is empty. Frames that only contain tags
+        // are considered empty, mirroring `is_empty_frame` in grid
+        // layouting, so accessibility tags alone do not count as content.
+        let empty = inner.items().all(|(_, item)| matches!(item, FrameItem::Tag(_)));
+        let hide_marginals =
+            empty && styles.get(PageElem::marginals) == Marginals::HideEmpty;
+
         let header_size = Size::new(inner.width(), margin.top - header_ascent);
         let footer_size = Size::new(inner.width(), margin.bottom - footer_descent);
         let full_size = inner.size() + margin.sum_by_axis() + bleed.sum_by_axis();
@@ -232,8 +240,16 @@ fn layout_page_run_impl(
             fill: fill.clone(),
             numbering: numbering.clone(),
             supplement: supplement.clone(),
-            header: layout_marginal(&header, header_size, Alignment::BOTTOM)?,
-            footer: layout_marginal(&footer, footer_size, Alignment::TOP)?,
+            header: if hide_marginals {
+                None
+            } else {
+                layout_marginal(&header, header_size, Alignment::BOTTOM)?
+            },
+            footer: if hide_marginals {
+                None
+            } else {
+                layout_marginal(&footer, footer_size, Alignment::TOP)?
+            },
             background: layout_marginal(&background, full_size, mid)?,
             foreground: layout_marginal(foreground, full_size, mid)?,
             margin,

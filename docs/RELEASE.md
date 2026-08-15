@@ -31,6 +31,18 @@ overwriting anything, and continues with signing, attestation, asset upload,
 aliasing, and publication. If the objects belong to a different commit, resume
 fails loudly instead of mixing provenance.
 
+Before dispatching a release whose publication tail has not been proven for
+the current workflow revision, dry-run the tail in a fork or staging
+repository with equivalent organization settings (public GHCR packages,
+protected environment). Exercise signing, attestation, asset upload, alias
+moves, and publish there first. A release run is the wrong place to discover
+that a flag, an API lookup, or a permission behaves differently than
+documented: the first release of this repository lost four runs in a row to
+exactly such drift, and every failure after the tag, draft, or versioned
+image digests exist costs a manual cleanup of objects the contract refuses to
+overwrite. The `resume` input only recovers failures whose objects match the
+same `main` commit.
+
 GitHub creates the first organization-scoped container package as private. On
 the first release only, the approved publication job pushes bounded
 `visibility-bootstrap` aliases before it creates the release tag, prints the

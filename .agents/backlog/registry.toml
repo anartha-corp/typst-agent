@@ -21,14 +21,14 @@ known_bad = [1765, 955, 5382]
 [[issues]]
 number = 2102
 title = "Make error more descriptive when non-sink argument is used instead of expected sink argument"
-status = "candidate"
+status = "mined"
 stance = "endorsing"
 subsystem = "diagnostics"
 confidence = 4
 safety = 5
 impact = 4
 burden = 1
-note = "good first issue + good contribution; laurmaedje suggests annotating the argument at the call site"
+note = "good first issue + good contribution; laurmaedje suggests annotating the argument at the call site; downstream patch detects args.span == func.span() and reports 'function received more arguments than it expected'"
 
 [[issues]]
 number = 3679
@@ -93,14 +93,14 @@ note = "additive PDF link target to embedded files; isolated in typst-pdf"
 [[issues]]
 number = 6183
 title = "Error when giving an empty list of extra font paths"
-status = "candidate"
-stance = "none"
+status = "mined"
+stance = "endorsing"
 subsystem = "cli"
 confidence = 4
 safety = 5
 impact = 2
 burden = 1
-note = "tiny CLI fix; an empty --font-path list should not error"
+note = "laurmaedje: accepting empty values and returning an empty vector; downstream patch adds a font-path value parser and filters empty paths in discover_fonts"
 
 [[issues]]
 number = 3640

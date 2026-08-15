@@ -1,3 +1,5 @@
+use std::num::NonZeroUsize;
+
 use ecow::eco_format;
 use typst_utils::singleton;
 
@@ -240,6 +242,49 @@ pub struct ParElem {
     /// @par.justification-limits[`justification-limits` property].
     #[default(false)]
     pub justify: bool,
+
+    /// The minimum number of lines to keep together at the bottom of a page,
+    /// preventing widows.
+    ///
+    /// A widow is a paragraph line that ends a page all on its own. By
+    /// default, Typst ensures that at least two lines end a page together;
+    /// this property allows configuring that count. A value of `{1}` disables
+    /// widow prevention, and larger values move more lines to the next page.
+    ///
+    /// This is a lower bound: lines can still move together in larger groups
+    /// due to other layout rules. The
+    /// @text.costs[text function's `widow` cost] must be positive for this to
+    /// take effect.
+    ///
+    /// ```example
+    /// #set page(height: 8em, margin: 0.5em)
+    /// #set par(widows: 3)
+    /// #lorem(40)
+    /// ```
+    #[default(NonZeroUsize::new(2).unwrap())]
+    pub widows: NonZeroUsize,
+
+    /// The minimum number of lines to keep together at the top of a page,
+    /// preventing orphans.
+    ///
+    /// An orphan is a paragraph line that starts a page all on its own. By
+    /// default, Typst ensures that at least two lines start a page together;
+    /// this property allows configuring that count. A value of `{1}` disables
+    /// orphan prevention, and larger values move more lines to the previous
+    /// page.
+    ///
+    /// This is a lower bound: lines can still move together in larger groups
+    /// due to other layout rules. The
+    /// @text.costs[text function's `orphan` cost] must be positive for this to
+    /// take effect.
+    ///
+    /// ```example
+    /// #set page(height: 8em, margin: 0.5em)
+    /// #set par(orphans: 3)
+    /// #lorem(40)
+    /// ```
+    #[default(NonZeroUsize::new(2).unwrap())]
+    pub orphans: NonZeroUsize,
 
     /// How much the spacing between words and characters may be adjusted during
     /// justification.

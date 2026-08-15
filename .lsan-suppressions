@@ -1,0 +1,10 @@
+# LeakSanitizer suppressions for the nightly fuzz rotation.
+#
+# LSan runs at process exit in the libFuzzer harness, so it reports statics
+# that are intentionally allocated once and live until exit. Suppress only
+# those known process-lifetime registries; every other leak still fails the
+# rotation.
+
+# typst-html typed element registry: `Box::leak(Box::new(Bump::new()))` in
+# `static FUNCS: LazyLock<Vec<NativeFuncData>>` (crates/typst-html/src/typed.rs).
+leak:typst_html::typed::FUNCS

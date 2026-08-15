@@ -1469,6 +1469,11 @@ b5a860aa35995c59da5bbb490e3ef37a page-marginal-style-text-call-code
 aca6e9c32dec0a91b80d78d4227c1459 page-marginal-style-text-set
 aca6e9c32dec0a91b80d78d4227c1459 page-marginal-style-text-set-first
 467c855bedbe9a93b1cc6c21a680b33c page-marginals
+115647969d24de75543a3988f479e280 page-marginals-always
+3b63c02cb35634b8a698397a9d402e2b page-marginals-background
+f105d75492389d49c97143004725922f page-marginals-numbering
+3fcf460f224ff88d6dd0c32be1779d5f page-marginals-parity
+e7f39b0dc71156a0768716c277639646 page-marginals-trailing
 6bf87c8a87a2e99f4f340d66d33045d6 page-number-align-bottom-left
 05037b8e528f7eb1d41d5a9959c6b3ff page-number-align-top-right
 ab1a4d80bc973c6ff7db5c39fac0d918 page-numbering-huge

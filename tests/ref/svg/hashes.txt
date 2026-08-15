@@ -1504,6 +1504,8 @@ e58d71d92a252c5cb2258fdab27ae396 par-first-line-indent-all-list
 551762fb87ff750754c41c61170f4c6b par-hanging-indent-semantic
 a57d370e15462359d602a9d2d4076492 par-leading-and-spacing
 4cde56799af82ddea704eec149b3880e par-metadata-after-trimmed-space
+881bc36ff5ff07509782064dac4fb06d par-orphans-default
+bd590837443ed27d94cf8429a6781359 par-orphans-one
 4c288e3ced11b36fbad1afa275cf6af9 par-semantic
 2b1cf3e37f065378dcd705be91ca4e33 par-semantic-align
 47a443c0b3492985964896fe70c95818 par-semantic-tag
@@ -1511,6 +1513,9 @@ a57d370e15462359d602a9d2d4076492 par-leading-and-spacing
 06720a140825273c867ee09348474f25 par-show-styles
 7cb2f79030b05a0e329cb8b8bad31e42 par-spacing-and-first-line-indent
 fcf39cacf4cbc391f5384173d337657f par-trailing-whitespace
+07ebd678556460912a4eafbe3223fe74 par-widows-default
+7c85ac211df13992d65ae64f8f86f03d par-widows-one
+a1e29406363b3ee66bf7b424246975db par-widows-three
 2b0169479fa2903a37f5b6711f75daf5 parser-backtracking-destructuring-whitespace
 57cbc73ac0d7bdd190178b0a573ff820 place-basic
 54a6dd2182e64434264974d55e2e19ef place-block-spacing

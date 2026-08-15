@@ -1,48 +1,45 @@
-# Visual report — PR 23 `empty-page-marginals` (#2722)
+# Visual report — PR 24 `widow-orphan-control` (#5931)
 
-Branch: `execute-plan/typst-agent-native-pr-23-empty-page-marginals`.
-Upstream issue: https://github.com/typst/typst/issues/2722.
+Branch: `execute-plan/typst-agent-native-pr-24-widow-orphan-control`.
+Upstream issue: https://github.com/typst/typst/issues/5931.
 Upstream anchor: `v0.15.1` (`a51e028041cac426f97d34335bb01d8f1d8e5e8f`).
 
 ## Change
 
-New `page` field `marginals: "always" (default) | "hide-empty"`. When a page's
-body frame is visually empty (contains no items, or only accessibility tags),
-the page's header and footer (including the automatic page number) are not
-rendered. Background and foreground are unaffected, the page counter still
-counts empty pages, and PDF page-label numbering metadata is preserved. The
-gating happens in `layout_page_run_impl` (`crates/typst-layout/src/pages/run.rs`)
-when constructing `LayoutedPage`; `pages/finalize.rs` is unchanged.
+New `par` fields `widows: int` and `orphans: int` (default `2`, values ≥ 1),
+the minimum number of lines kept together at the bottom and top of a page.
+Default `2` reproduces the previous behavior exactly; `1` disables the
+respective prevention; larger values move more lines. The existing
+`text(costs: (widow: .., orphan: ..))` ratios remain the on/off switch.
+Engine change in `layout_flow` line collection
+(`crates/typst-layout/src/flow/collect.rs`), replacing the hardcoded
+two-line rules with configurable counts; when the two requirements overlap,
+the whole paragraph moves as a unit.
 
 ## Test evidence
 
-Five new suite tests in `tests/suite/layout/page-marginals.typ`, all using an
-80pt-tall page with `margin: (top: 20pt, bottom: 20pt)`, header `[HEADER]`,
-footer `[FOOTER]` unless noted. Per-page glyph-group evidence was extracted
-from the generated SVGs (`tests/store/svg/*.svg`):
+Five new suite tests in `tests/suite/layout/par-widow-orphan.typ`, using
+52.5pt-tall pages (exactly four 13.08pt lines) and explicit `linebreak()`
+paragraphs so line counts are deterministic. Line counts per page were
+extracted from the generated SVGs (`tests/store/svg/*.svg`):
 
-1. `page-marginals-parity` (hide-empty): 3 pages. Page 1: header + 2 text lines
-   + footer. Page 2 (inserted by `pagebreak(to: "odd")`): **0 glyphs** — header
-   and footer hidden. Page 3: header + text + footer.
-2. `page-marginals-always` (default): 3 pages. Page 2 (parity blank): header
-   and footer **shown** — default behavior preserved; differs from (1) only on
-   the blank page.
-3. `page-marginals-numbering` (hide-empty, `numbering: "1"`, no explicit
-   header): 3 pages. Page 2: **0 glyphs** (no page number). The footer glyph on
-   page 3 differs from page 1, i.e. page 3 renders "3" — the counter counts the
-   empty page.
-4. `page-marginals-background` (hide-empty, `background: [BG]`): 3 pages.
-   Page 2: exactly the two "BG" glyphs — background preserved while the header
-   is hidden.
-5. `page-marginals-trailing` (hide-empty, `pagebreak(weak: false)`): 2 pages.
-   Page 2: **0 glyphs** — the trailing empty page hides its header.
+1. `par-widows-default` (5-line par, default widows=2): pages [3, 2] — the
+   last two lines move together.
+2. `par-widows-three` (`par(widows: 3)`): pages [2, 3] — the last three lines
+   move together.
+3. `par-widows-one` (`par(widows: 1)`): pages [4, 1] — prevention disabled, a
+   single line ends a page.
+4. `par-orphans-default` (3-line par + 5-line par, default orphans=2):
+   pages [3, 3, 2] — no single line starts a page.
+5. `par-orphans-one` (`par(orphans: 1)`): pages [4, 4] — a single line may
+   start a page.
 
-New reference outputs: `tests/ref/render/page-marginals-{parity,always,
-numbering,background,trailing}.png` plus additive entries in
+New reference outputs: `tests/ref/render/par-widows-{default,three,one}.png`
+and `tests/ref/render/par-orphans-{default,one}.png`, plus additive entries in
 `tests/ref/{pdf,svg}/hashes.txt`. No existing reference output or hash was
-modified (verified with `git diff` on both hash files: additions only).
+modified (verified via `git diff` on both hash files: additions only).
 
 ## Test runs
 
 - `cargo testit`: 3750 passed, 0 failed, 0 skipped (full suite, no regressions).
-- `cargo test -p typst-layout -p typst-realize -p typst`: passed.
+- `cargo test -p typst-layout -p typst-realize -p typst`.

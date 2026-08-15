@@ -25,7 +25,9 @@ jobs:
             refs/heads/mirror/upstream-main:refs/heads/mirror/upstream-main
       - name: Dependency security audit
         run: |
-          cargo install --locked cargo-audit@0.21.2
+          # 0.21.2 can no longer parse current advisory-db entries
+          # (e.g. RUSTSEC-2026-0066: TOML parse error); 0.22.2 parses them.
+          cargo install --locked cargo-audit@0.22.2
           cargo audit
       - name: Contract and invariant drift
         run: |

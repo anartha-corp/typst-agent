@@ -93,6 +93,15 @@
         "guide": "AGENTS.md",
         "required_checks": ["cargo test -p typst-agent-dev", "cargo agent eval"],
         "invariant_ids": ["release-human-gate"]
+      },
+      {
+        "id": "backlog",
+        "path_prefixes": [".agents/backlog/"],
+        "exact_paths": ["scripts/backlog-fetch.sh"],
+        "authority_sources": ["scripts/backlog-fetch.sh", "agent-contract/v1/schema.json", ".agents/backlog/registry.toml"],
+        "guide": ".agents/areas/backlog.md",
+        "required_checks": ["cargo agent backlog --self-check"],
+        "invariant_ids": ["backlog-scoring-deterministic", "backlog-no-active-upstream-fork"]
       }
     ]
   }

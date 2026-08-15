@@ -1,0 +1,24 @@
+[
+  {
+    "number": 7295,
+    "title": "Add support for unselectable text",
+    "author": "andylizi",
+    "draft": false,
+    "created_at": "2025-11-03",
+    "updated_at": "2026-08-12",
+    "linked_issues": [
+      2249
+    ]
+  },
+  {
+    "number": 7931,
+    "title": "Allow equation and tight lists/enums to be part of paragraphs",
+    "author": "mkorje",
+    "draft": false,
+    "created_at": "2026-03-02",
+    "updated_at": "2026-08-15",
+    "linked_issues": [
+      3206
+    ]
+  }
+]

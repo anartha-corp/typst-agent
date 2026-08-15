@@ -126,3 +126,21 @@ records:
     review_prompts: [Are merge and release jobs protected by a human environment?]
     upstream_anchor: v0.15.1
     upstream_sha: a51e028041cac426f97d34335bb01d8f1d8e5e8f
+  - id: backlog-scoring-deterministic
+    scope: .agents/backlog, scripts/backlog-fetch.sh
+    statement: Golden-backlog scores are a pure function of a frozen snapshot and the annotated registry.
+    rationale: Weekly curation decisions and review evidence must be reproducible from committed inputs.
+    authority_source: .agents/backlog/registry.toml
+    required_checks: [cargo agent backlog --self-check]
+    review_prompts: [Does the reported score match a re-run on the same snapshot and registry?]
+    upstream_anchor: v0.15.1
+    upstream_sha: a51e028041cac426f97d34335bb01d8f1d8e5e8f
+  - id: backlog-no-active-upstream-fork
+    scope: .agents/backlog
+    statement: The backlog scorer excludes issues upstream is actively working on unless a recorded human override exists.
+    rationale: Forking an issue upstream is about to solve creates API divergence risk.
+    authority_source: .agents/backlog/registry.toml
+    required_checks: [cargo agent backlog --self-check]
+    review_prompts: [Is every exclusion justified by a recorded reason or an upstream PR linkage?]
+    upstream_anchor: v0.15.1
+    upstream_sha: a51e028041cac426f97d34335bb01d8f1d8e5e8f

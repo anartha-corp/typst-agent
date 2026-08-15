@@ -1,0 +1,595 @@
+# Golden backlog registry for typst-agent.
+#
+# This file is the durable memory of the mining pipeline. `cargo agent
+# backlog` scores each entry deterministically: demand is derived from the
+# frozen snapshot, and confidence/safety/impact/burden are annotated here.
+# Scores are therefore reproducible; never hand-edit a number to move a tier.
+#
+# Status lifecycle: candidate -> mined -> shipped | watch | excluded | upstream-shipped
+# Stance: endorsing | neutral | skeptical | planned | none
+# Exclusion reasons: upstream-active, upstream-pr-active, security-sandbox,
+#                    upstream-skeptical, roadmap-tracking, not-planned (derived)
+
+version = 1
+
+[calibration]
+# Known-good reference mines: must always score into tier a/b.
+reference_mines = [2722, 6059]
+# Known-bad candidates: the scorer must always exclude them.
+known_bad = [1765, 955, 5382]
+
+[[issues]]
+number = 2102
+title = "Make error more descriptive when non-sink argument is used instead of expected sink argument"
+status = "candidate"
+stance = "endorsing"
+subsystem = "diagnostics"
+confidence = 4
+safety = 5
+impact = 4
+burden = 1
+note = "good first issue + good contribution; laurmaedje suggests annotating the argument at the call site"
+
+[[issues]]
+number = 3679
+title = "Get `typst` packaged for Debian and other repos"
+status = "candidate"
+stance = "none"
+subsystem = "devops"
+confidence = 4
+safety = 5
+impact = 4
+burden = 2
+note = "distribution demand evidence; ship typst-agent packages (deb/rpm/brew/aur/nix), never upstream binaries"
+
+[[issues]]
+number = 6059
+title = "Add JSON format for CLI diagnostics"
+status = "mined"
+stance = "endorsing"
+subsystem = "cli"
+confidence = 4
+safety = 5
+impact = 4
+burden = 1
+note = "reference mine; downstream PR #22/#25 in flight"
+
+[[issues]]
+number = 2722
+title = "Skip headers and footers for skipped pages"
+status = "shipped"
+stance = "endorsing"
+subsystem = "layout"
+confidence = 3
+safety = 5
+impact = 3
+burden = 2
+note = "reference mine; shipped downstream as page(marginals) in PR #23"
+
+[[issues]]
+number = 5314
+title = "Footnote precedes a reference to it"
+status = "candidate"
+stance = "none"
+subsystem = "layout"
+confidence = 3
+safety = 4
+impact = 4
+burden = 2
+note = "regression; footnotes must not precede their reference marker"
+
+[[issues]]
+number = 6200
+title = "Clickable links to embedded files"
+status = "candidate"
+stance = "none"
+subsystem = "pdf"
+confidence = 3
+safety = 5
+impact = 3
+burden = 2
+note = "additive PDF link target to embedded files; isolated in typst-pdf"
+
+[[issues]]
+number = 6183
+title = "Error when giving an empty list of extra font paths"
+status = "candidate"
+stance = "none"
+subsystem = "cli"
+confidence = 4
+safety = 5
+impact = 2
+burden = 1
+note = "tiny CLI fix; an empty --font-path list should not error"
+
+[[issues]]
+number = 3640
+title = "Unable to style `table.header` and `table.footer`"
+status = "candidate"
+stance = "none"
+subsystem = "styling"
+confidence = 3
+safety = 4
+impact = 4
+burden = 2
+note = "styling bug; show/set rules must reach table.header and table.footer"
+
+[[issues]]
+number = 4359
+title = "References to floating figures point to wrong location"
+status = "candidate"
+stance = "none"
+subsystem = "introspection"
+confidence = 3
+safety = 4
+impact = 4
+burden = 2
+note = "introspection bug; refs to floating figures resolve to the wrong location"
+
+[[issues]]
+number = 2835
+title = "Add wavy and double+ underline functions"
+status = "candidate"
+stance = "endorsing"
+subsystem = "text"
+confidence = 3
+safety = 4
+impact = 3
+burden = 2
+note = "laurmaedje: stroke based on a pattern might work"
+
+[[issues]]
+number = 1226
+title = "Manual bookmarks"
+status = "candidate"
+stance = "none"
+subsystem = "pdf"
+confidence = 3
+safety = 5
+impact = 3
+burden = 2
+note = "additive PDF outline bookmarks API"
+
+[[issues]]
+number = 682
+title = "\"Z-stack\" container"
+status = "candidate"
+stance = "endorsing"
+subsystem = "layout"
+confidence = 4
+safety = 4
+impact = 4
+burden = 3
+note = "laurmaedje: useful, probably pretty simple; suggested name `overlay`"
+
+[[issues]]
+number = 1716
+title = "Can't use `over-/underline()` with any space symbol or `h()`"
+status = "candidate"
+stance = "none"
+subsystem = "text"
+confidence = 3
+safety = 4
+impact = 3
+burden = 2
+note = "text crate bug; decorations break on spaces and h()"
+
+[[issues]]
+number = 2200
+title = "Text decoration functions not working with inline equations"
+status = "candidate"
+stance = "endorsing"
+subsystem = "math"
+confidence = 3
+safety = 4
+impact = 3
+burden = 2
+note = "laurmaedje: fix is relatively easy once highlight semantics are agreed"
+
+[[issues]]
+number = 1465
+title = "Embed source code in PDF"
+status = "candidate"
+stance = "skeptical"
+subsystem = "pdf"
+confidence = 3
+safety = 4
+impact = 3
+burden = 2
+note = "opt-in only; laurmaedje objects to embedding sources by default"
+
+[[issues]]
+number = 4035
+title = "Downgrade missing references from errors to warning"
+status = "candidate"
+stance = "none"
+subsystem = "diagnostics"
+confidence = 3
+safety = 3
+impact = 4
+burden = 2
+note = "must stay opt-in; do not change the default error behavior"
+
+[[issues]]
+number = 2422
+title = "Horizontal `stack` does not correctly resize its children"
+status = "candidate"
+stance = "endorsing"
+subsystem = "layout"
+confidence = 3
+safety = 4
+impact = 3
+burden = 2
+note = "laurmaedje: likely fixable without a new field"
+
+[[issues]]
+number = 4416
+title = "Thicker table (v)line becomes longer and exceeds the table bounds/borders"
+status = "candidate"
+stance = "none"
+subsystem = "visualize"
+confidence = 3
+safety = 4
+impact = 3
+burden = 2
+note = "visualize bug; thick vlines must stay inside table bounds"
+
+[[issues]]
+number = 1880
+title = "Footnotes and citations are duplicated in outlines"
+status = "candidate"
+stance = "neutral"
+subsystem = "model"
+confidence = 3
+safety = 4
+impact = 3
+burden = 2
+note = "model bug; outline entries duplicate footnotes and citations"
+
+[[issues]]
+number = 394
+title = "Fake text weight and style (synthesized bold and italic)"
+status = "candidate"
+stance = "endorsing"
+subsystem = "text"
+confidence = 3
+safety = 4
+impact = 3
+burden = 3
+note = "laurmaedje: community embolden approach acceptable for now"
+
+[[issues]]
+number = 2887
+title = "Content `repr` isn't always valid syntax"
+status = "candidate"
+stance = "none"
+subsystem = "scripting"
+confidence = 4
+safety = 4
+impact = 3
+burden = 2
+note = "good contribution; repr should round-trip to valid syntax"
+
+[[issues]]
+number = 2025
+title = "Check if file exists"
+status = "watch"
+stance = "endorsing"
+subsystem = "scripting"
+confidence = 3
+safety = 3
+impact = 3
+burden = 2
+note = "watch: the path type landed upstream; upstream may act soon"
+
+[[issues]]
+number = 2249
+title = "Add a way to make text non-selectable"
+status = "watch"
+stance = "endorsing"
+subsystem = "pdf"
+confidence = 4
+safety = 2
+impact = 3
+burden = 2
+note = "watch: upstream PR #7295 alive; implement that PR's API if mined"
+
+[[issues]]
+number = 3269
+title = "Number formatting"
+status = "watch"
+stance = "endorsing"
+subsystem = "scripting"
+confidence = 2
+safety = 3
+impact = 4
+burden = 3
+note = "watch: API scope open; forge thread exists"
+
+[[issues]]
+number = 1093
+title = "Locale-aware number formatting"
+status = "watch"
+stance = "endorsing"
+subsystem = "text"
+confidence = 2
+safety = 4
+impact = 3
+burden = 3
+note = "watch: i18n matrix needs native-speaker review"
+
+[[issues]]
+number = 2123
+title = "Directory walking"
+status = "watch"
+stance = "neutral"
+subsystem = "scripting"
+confidence = 2
+safety = 4
+impact = 3
+burden = 3
+note = "watch: return shape undecided by laurmaedje"
+
+[[issues]]
+number = 1669
+title = "Logging function for debug output"
+status = "watch"
+stance = "neutral"
+subsystem = "scripting"
+confidence = 2
+safety = 3
+impact = 4
+burden = 3
+note = "watch: log-file vs terminal design conflict"
+
+[[issues]]
+number = 1896
+title = "Ergonomic numbering-by-section"
+status = "watch"
+stance = "endorsing"
+subsystem = "model"
+confidence = 2
+safety = 3
+impact = 4
+burden = 3
+note = "watch: design debate; workaround exists since 0.11"
+
+[[issues]]
+number = 4174
+title = "Export target elements"
+status = "watch"
+stance = "endorsing"
+subsystem = "model"
+confidence = 4
+safety = 2
+impact = 4
+burden = 4
+note = "designed upstream; align to the upstream API shape if mined"
+
+[[issues]]
+number = 2469
+title = "Load fonts / font families from files or bytes"
+status = "watch"
+stance = "skeptical"
+subsystem = "text"
+confidence = 2
+safety = 4
+impact = 4
+burden = 3
+note = "watch: load-font design problems noted by laurmaedje"
+
+[[issues]]
+number = 5472
+title = "Paragraph justification sometimes doesn't use the full page width"
+status = "watch"
+stance = "neutral"
+subsystem = "layout"
+confidence = 2
+safety = 3
+impact = 4
+burden = 3
+note = "watch: needs a paragraph layout heuristic"
+
+[[issues]]
+number = 2401
+title = "Plaintext export"
+status = "watch"
+stance = "endorsing"
+subsystem = "cli"
+confidence = 2
+safety = 3
+impact = 3
+burden = 3
+note = "watch: blocked on export infrastructure upstream needs too"
+
+[[issues]]
+number = 5181
+title = "Wrap text around image with an irregular paragraph shape"
+status = "watch"
+stance = "none"
+subsystem = "layout"
+confidence = 1
+safety = 4
+impact = 3
+burden = 4
+note = "watch: complex layout without a design"
+
+[[issues]]
+number = 7998
+title = "Selector references and nested reference syntax"
+status = "watch"
+stance = "endorsing"
+subsystem = "model"
+confidence = 5
+safety = 2
+impact = 3
+burden = 4
+note = "designed but new; align to the upstream design if mined"
+
+[[issues]]
+number = 1765
+title = "Support for interactive forms"
+status = "excluded"
+stance = "planned"
+subsystem = "pdf"
+confidence = 3
+safety = 1
+impact = 3
+burden = 5
+exclude_reason = "upstream-active"
+note = "upstream is hiring a freelancer to ship this feature"
+
+[[issues]]
+number = 3206
+title = "Paragraph should be able to contain tight lists and block-level equations"
+status = "excluded"
+stance = "skeptical"
+subsystem = "model"
+confidence = 1
+safety = 1
+impact = 4
+burden = 5
+exclude_reason = "upstream-pr-active"
+note = "upstream PR #7931 alive; laurmaedje is not convinced by the design"
+
+[[issues]]
+number = 5382
+title = "Allow loading of files outside the project folder (in addition to --root)"
+status = "excluded"
+stance = "neutral"
+subsystem = "cli"
+confidence = 2
+safety = 1
+impact = 3
+burden = 2
+exclude_reason = "security-sandbox"
+note = "sandbox boundary; requires an explicit human security decision"
+
+[[issues]]
+number = 955
+title = "Add support for videos"
+status = "excluded"
+stance = "skeptical"
+subsystem = "pdf"
+confidence = 2
+safety = 4
+impact = 2
+burden = 4
+exclude_reason = "upstream-skeptical"
+note = "viewer support is poor; reknih is skeptical"
+
+[[issues]]
+number = 721
+title = "HTML Export"
+status = "excluded"
+stance = "planned"
+subsystem = "html"
+confidence = 2
+safety = 1
+impact = 5
+burden = 5
+exclude_reason = "upstream-active"
+note = "upstream: work on HTML export is properly starting now"
+
+[[issues]]
+number = 147
+title = "Support for user-defined elements/types"
+status = "excluded"
+stance = "planned"
+subsystem = "language"
+confidence = 2
+safety = 1
+impact = 4
+burden = 5
+exclude_reason = "upstream-active"
+note = "upstream: planned, will become a focus in the near-ish future"
+
+[[issues]]
+number = 317
+title = "Type annotations"
+status = "excluded"
+stance = "planned"
+subsystem = "language"
+confidence = 2
+safety = 1
+impact = 4
+burden = 5
+exclude_reason = "upstream-active"
+note = "upstream: planned type system work"
+
+[[issues]]
+number = 1316
+title = "Match/switch expression"
+status = "excluded"
+stance = "planned"
+subsystem = "language"
+confidence = 1
+safety = 1
+impact = 4
+burden = 5
+exclude_reason = "upstream-active"
+note = "upstream: tied to the type and styling systems"
+
+[[issues]]
+number = 420
+title = "Resetting `show` and `set` to its default / Revoke rules"
+status = "excluded"
+stance = "planned"
+subsystem = "styling"
+confidence = 2
+safety = 1
+impact = 4
+burden = 5
+exclude_reason = "upstream-active"
+note = "upstream: design not yet finalized (forge thread)"
+
+[[issues]]
+number = 7006
+title = "PDF/UA-2"
+status = "excluded"
+stance = "planned"
+subsystem = "pdf"
+confidence = 2
+safety = 1
+impact = 4
+burden = 4
+exclude_reason = "roadmap-tracking"
+note = "roadmap tracking issue"
+
+[[issues]]
+number = 193
+title = "Advanced East-Asian layout features"
+status = "excluded"
+stance = "planned"
+subsystem = "text"
+confidence = 2
+safety = 1
+impact = 4
+burden = 4
+exclude_reason = "roadmap-tracking"
+note = "roadmap tracking issue"
+
+[[issues]]
+number = 2421
+title = "Tracking Issue: Interactive Forms"
+status = "excluded"
+stance = "planned"
+subsystem = "pdf"
+confidence = 2
+safety = 1
+impact = 4
+burden = 4
+exclude_reason = "roadmap-tracking"
+note = "roadmap tracking issue"
+
+[[issues]]
+number = 6225
+title = "Flatpak distribution of Typst compiler."
+status = "candidate"
+stance = "none"
+subsystem = "devops"
+confidence = 4
+safety = 5
+impact = 4
+burden = 2
+note = "auto-excluded: upstream closed this as not planned; packaging remains a downstream initiative"

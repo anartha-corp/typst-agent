@@ -331,8 +331,32 @@ const FIGURE_RULE: ShowFn<FigureElem> = |elem, _, styles| {
     // Ensure that the body is considered a paragraph.
     realized += ParbreakElem::shared().clone().spanned(span);
 
-    // Wrap the contents in a block.
-    realized = BlockElem::packed(realized).spanned(span);
+    // Wrap the contents in a block, prepending a continuation caption on
+    // every fragment after the first if requested.
+    if let Some(repeat) = elem.caption_repeat.get_cloned(styles) {
+        if elem.caption.get_cloned(styles).is_none() {
+            bail!(
+                span,
+                "`caption-repeat` requires a caption";
+                hint: "set `caption` to repeat it on following pages";
+            );
+        }
+        if elem.placement.get(styles).is_some() {
+            bail!(
+                span,
+                "`caption-repeat` is not available for floating figures";
+                hint: "remove `placement` to allow the figure to break across pages";
+            );
+        }
+        realized = BlockElem::new()
+            .with_body(Some(BlockBody::Content(realized)))
+            .with_breakable(true)
+            .with_continuation(Some(repeat))
+            .pack()
+            .spanned(span);
+    } else {
+        realized = BlockElem::packed(realized).spanned(span);
+    }
 
     // Wrap in a float.
     if let Some(align) = elem.placement.get(styles) {

@@ -46,6 +46,7 @@ c187a1561a383b606f4a983e84d4100c block-box-fill
 72a5a7db8befa759f88995c2d32d2ea6 block-clip-text
 fbd3d4ceada48ba36542f5e3afb48c45 block-clipping-multiple-pages
 f5ff1f143a7a6f26353fcaac0c017a9a block-consistent-width
+a93fbe1d1eb01d1936649ae92ec054c6 block-continuation
 b28568a31135693ca7c0bf15586901e4 block-fixed-height
 e87e5cb02dae543b42bcb85776a8467d block-fr-height
 411951218cc68f200d4bcf2ca5e267c9 block-fr-height-auto-width
@@ -233,6 +234,8 @@ f22e450cf38679a8e30c9e447503bd70 figure-basic
 474c6e27fe73518ef241e99e140b72e3 figure-caption-separator
 2a12267d33513493dc9b1382554f451a figure-caption-show
 cc98f56bc5cfeef0070100aba9a7a5da figure-caption-where-selector
+c312f74ad9cdb5b2711532dd8adcea77 figure-continuation-block
+7efb0a897493bc0784b30413e67cf0d1 figure-continuation-table
 531d0a4acd74b9cbc5ebe7679e6b8384 figure-localization-el
 f01f0ab606435a3db8b2c53ca1eecef5 figure-localization-fr
 0a8f535188cef7d7296e28119e32e49d figure-localization-ru
@@ -1509,6 +1512,8 @@ e58d71d92a252c5cb2258fdab27ae396 par-first-line-indent-all-list
 551762fb87ff750754c41c61170f4c6b par-hanging-indent-semantic
 a57d370e15462359d602a9d2d4076492 par-leading-and-spacing
 4cde56799af82ddea704eec149b3880e par-metadata-after-trimmed-space
+881bc36ff5ff07509782064dac4fb06d par-orphans-default
+bd590837443ed27d94cf8429a6781359 par-orphans-one
 4c288e3ced11b36fbad1afa275cf6af9 par-semantic
 2b1cf3e37f065378dcd705be91ca4e33 par-semantic-align
 47a443c0b3492985964896fe70c95818 par-semantic-tag
@@ -1516,6 +1521,9 @@ a57d370e15462359d602a9d2d4076492 par-leading-and-spacing
 06720a140825273c867ee09348474f25 par-show-styles
 7cb2f79030b05a0e329cb8b8bad31e42 par-spacing-and-first-line-indent
 fcf39cacf4cbc391f5384173d337657f par-trailing-whitespace
+07ebd678556460912a4eafbe3223fe74 par-widows-default
+7c85ac211df13992d65ae64f8f86f03d par-widows-one
+a1e29406363b3ee66bf7b424246975db par-widows-three
 2b0169479fa2903a37f5b6711f75daf5 parser-backtracking-destructuring-whitespace
 57cbc73ac0d7bdd190178b0a573ff820 place-basic
 54a6dd2182e64434264974d55e2e19ef place-block-spacing

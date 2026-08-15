@@ -203,6 +203,30 @@ pub struct FigureElem {
     /// The figure's caption.
     pub caption: Option<Packed<FigureCaption>>,
 
+    /// A caption variant to show on the continuation fragments of a figure
+    /// that breaks across pages, for instance
+    /// `[Tabel 1: _lanjutan_]` for a long table.
+    ///
+    /// It is placed at the top of every page the figure continues on, after
+    /// the first one. This requires the figure to have a @figure.caption
+    /// [`caption`] and no @figure.placement[`placement`], since floating
+    /// figures cannot break across pages.
+    ///
+    /// ```example
+    /// #set page(height: 14em)
+    /// #set text(size: 8pt)
+    /// #figure(
+    ///   table(
+    ///     columns: 3,
+    ///     table.header([A], [B], [C]),
+    ///     ..range(30).map(x => (str(x), str(x + 1), str(x + 2))).flatten(),
+    ///   ),
+    ///   caption: [Data],
+    ///   caption-repeat: [_Data (continued)_],
+    /// )
+    /// ```
+    pub caption_repeat: Option<Content>,
+
     /// The kind of figure this is.
     ///
     /// All figures of the same kind share a common counter.

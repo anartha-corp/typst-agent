@@ -278,6 +278,166 @@ fn test_tracepoints() {
 }
 
 #[test]
+fn test_diagnostics_json_error() {
+    let project = tempfs();
+    let main = project.write("main.typ", "#panic(\"boom\")");
+    let output = exec()
+        .arg("compile")
+        .arg(&main)
+        .arg("--diagnostic-format")
+        .arg("json")
+        .must_fail();
+    let array = output.stderr.must_parse_json_array();
+    assert_eq!(
+        array.as_array().unwrap().len(),
+        1,
+        "expected exactly one diagnostic, got {array}"
+    );
+    let diag = &array[0];
+    diag.must_field("severity").must_eq_str("error");
+    diag.must_field("message").must_contain_str("panicked with: boom");
+    let span = diag.must_field("span");
+    span.must_field("file").must_end_with_str("main.typ");
+    span.must_field("line").must_eq_u64(1);
+    span.must_field("column").must_eq_u64(2);
+    span.must_field("start").must_eq_u64(1);
+    span.must_field("end").must_eq_u64(14);
+}
+
+#[test]
+fn test_diagnostics_json_success_empty() {
+    let project = tempfs();
+    let main = project.write("main.typ", "Hello World");
+    let output = exec()
+        .arg("compile")
+        .arg(&main)
+        .arg("--diagnostic-format")
+        .arg("json")
+        .must_succeed();
+    output.stderr.must_match_lines(["[]"]);
+    project.read("main.pdf").must_start_with("%PDF");
+}
+
+#[test]
+fn test_diagnostics_json_warning_detached() {
+    // Using `--pages` implies `--no-pdf-tags`, which yields a detached warning
+    // with hints.
+    let project = tempfs();
+    let main = project.write("main.typ", "Hello World");
+    let output = exec()
+        .arg("compile")
+        .arg(&main)
+        .arg("--pages")
+        .arg("1")
+        .arg("--diagnostic-format")
+        .arg("json")
+        .must_succeed();
+    let array = output.stderr.must_parse_json_array();
+    assert_eq!(
+        array.as_array().unwrap().len(),
+        1,
+        "expected exactly one diagnostic, got {array}"
+    );
+    let diag = &array[0];
+    diag.must_field("severity").must_eq_str("warning");
+    diag.must_field("message").must_contain_str("implies --no-pdf-tags");
+    diag.must_field("span").must_eq_null();
+    let hints = diag.must_field("hints");
+    assert!(
+        !hints.as_array().is_none_or(Vec::is_empty),
+        "expected at least one hint, got {hints}",
+    );
+}
+
+#[test]
+fn test_diagnostics_json_trace() {
+    let project = tempfs();
+    let main = project.write(
+        "main.typ",
+        r#"#show strong: _ => include "chap" + "ter1.typ"
+           *Slightly unusual
+            strong text*"#,
+    );
+    project.write(
+        "chapter1.typ",
+        r#"#import "system.typ": my-figure
+           #my-figure(
+             "tigers.jpg"
+           )"#,
+    );
+    project.write("system.typ", "#let my-figure(p) = image(p)");
+    let output = exec()
+        .arg("compile")
+        .arg(&main)
+        .arg("--diagnostic-format")
+        .arg("json")
+        .must_fail();
+    let array = output.stderr.must_parse_json_array();
+    assert_eq!(
+        array.as_array().unwrap().len(),
+        1,
+        "expected exactly one diagnostic, got {array}"
+    );
+    let trace = array[0].must_field("trace");
+    let kinds = trace
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|point| point.must_field("kind").as_str().unwrap())
+        .collect::<HashSet<_>>();
+    assert!(
+        kinds.contains("call") && kinds.contains("show") && kinds.contains("include"),
+        "unexpected tracepoint kinds {kinds:?}",
+    );
+    let include = trace
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|point| point.must_field("kind").as_str() == Some("include"))
+        .unwrap();
+    include.must_field("name").must_eq_str("chapter1.typ");
+    // The tracepoint's span points at the include expression in the main file.
+    include
+        .must_field("span")
+        .must_field("file")
+        .must_end_with_str("main.typ");
+}
+
+#[test]
+fn test_diagnostics_json_app_error() {
+    // Errors raised before compilation (like an unknown output format) have no
+    // source location, but still need to be JSON in JSON mode.
+    let project = tempfs();
+    let main = project.write("main.typ", "Hello World");
+    let output = exec()
+        .arg("compile")
+        .arg(&main)
+        .arg(project.resolve("out.xyz"))
+        .arg("--diagnostic-format")
+        .arg("json")
+        .must_fail();
+    let array = output.stderr.must_parse_json_array();
+    assert_eq!(
+        array.as_array().unwrap().len(),
+        1,
+        "expected exactly one diagnostic, got {array}"
+    );
+    let diag = &array[0];
+    diag.must_field("severity").must_eq_str("error");
+    diag.must_field("message")
+        .must_contain_str("could not infer output format");
+    diag.must_field("span").must_eq_null();
+    diag.must_field("hints").must_eq_empty_array();
+    diag.must_field("trace").must_eq_empty_array();
+}
+
+#[test]
+fn test_help_compile_diagnostic_format_json() {
+    let output = exec().arg("compile").arg("--help").must_succeed();
+    output.stdout.must_contain("diagnostic-format").must_contain("json");
+}
+
+#[test]
 fn test_target_available() {
     let project = tempfs();
     let main = project.write("main.typ", "#context target()");
@@ -287,6 +447,84 @@ fn test_target_available() {
 /// Executes a command with the Typst CLI.
 fn exec() -> Command {
     Command::new(env!("CARGO_BIN_EXE_typst-agent"))
+}
+
+#[track_caller]
+fn must_field<'a>(value: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
+    value
+        .get(name)
+        .unwrap_or_else(|| panic!("missing field `{name}` in {value}"))
+}
+
+/// Assertion helpers for JSON values, callable as methods.
+trait JsonAssert {
+    #[track_caller]
+    fn must_field(&self, name: &str) -> &serde_json::Value;
+    #[track_caller]
+    fn must_eq_str(&self, expected: &str);
+    #[track_caller]
+    fn must_contain_str(&self, needle: &str);
+    #[track_caller]
+    fn must_end_with_str(&self, suffix: &str);
+    #[track_caller]
+    fn must_eq_u64(&self, expected: u64);
+    #[track_caller]
+    fn must_eq_null(&self);
+    #[track_caller]
+    fn must_eq_empty_array(&self);
+}
+
+impl JsonAssert for serde_json::Value {
+    #[track_caller]
+    fn must_field(&self, name: &str) -> &serde_json::Value {
+        must_field(self, name)
+    }
+
+    #[track_caller]
+    fn must_eq_str(&self, expected: &str) {
+        assert_eq!(
+            self.as_str(),
+            Some(expected),
+            "expected string {expected:?}, got {self}"
+        );
+    }
+
+    #[track_caller]
+    fn must_contain_str(&self, needle: &str) {
+        let string =
+            self.as_str().unwrap_or_else(|| panic!("expected string, got {self}"));
+        assert!(string.contains(needle), "{string:?} did not contain {needle:?}");
+    }
+
+    #[track_caller]
+    fn must_end_with_str(&self, suffix: &str) {
+        let string =
+            self.as_str().unwrap_or_else(|| panic!("expected string, got {self}"));
+        assert!(string.ends_with(suffix), "{string:?} did not end with {suffix:?}");
+    }
+
+    #[track_caller]
+    fn must_eq_u64(&self, expected: u64) {
+        assert_eq!(
+            self.as_u64(),
+            Some(expected),
+            "expected number {expected}, got {self}"
+        );
+    }
+
+    #[track_caller]
+    fn must_eq_null(&self) {
+        assert!(self.is_null(), "expected null, got {self}");
+    }
+
+    #[track_caller]
+    fn must_eq_empty_array(&self) {
+        assert_eq!(
+            self.as_array().map(Vec::len),
+            Some(0),
+            "expected empty array, got {self}",
+        );
+    }
 }
 
 trait CommandExt {
@@ -386,6 +624,21 @@ impl<T: AsRef<[u8]>> Stream<T> {
             lines.into_iter().collect::<Vec<_>>(),
         );
         self
+    }
+
+    /// Parses the whole stream as JSON.
+    #[track_caller]
+    fn must_parse_json(&self) -> serde_json::Value {
+        serde_json::from_slice(self.0.as_ref())
+            .unwrap_or_else(|err| panic!("not valid JSON ({err}): {self:?}"))
+    }
+
+    /// Parses the whole stream as a JSON array.
+    #[track_caller]
+    fn must_parse_json_array(&self) -> serde_json::Value {
+        let value = self.must_parse_json();
+        assert!(value.is_array(), "expected JSON array, got {value}");
+        value
     }
 
     fn contains(&self, data: impl AsRef<[u8]>) -> bool {

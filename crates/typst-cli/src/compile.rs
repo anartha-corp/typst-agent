@@ -260,7 +260,9 @@ pub fn compile_once(
     config: &mut CompileConfig,
 ) -> HintedStrResult<()> {
     let start = std::time::Instant::now();
-    if config.watching {
+    // In JSON mode, standard error must only contain JSON, so the human
+    // status banner is suppressed.
+    if config.watching && config.diagnostic_format != DiagnosticFormat::Json {
         Status::Compiling.print(config).unwrap();
     }
 
@@ -278,7 +280,7 @@ pub fn compile_once(
         // Print success message and possibly warnings.
         Ok(_) => {
             let duration = start.elapsed();
-            if config.watching {
+            if config.watching && config.diagnostic_format != DiagnosticFormat::Json {
                 if warnings.is_empty() {
                     Status::Success(duration).print(config).unwrap();
                 } else {
@@ -296,7 +298,7 @@ pub fn compile_once(
         Err(errors) => {
             set_failed();
 
-            if config.watching {
+            if config.watching && config.diagnostic_format != DiagnosticFormat::Json {
                 Status::Error.print(config).unwrap();
             }
 
@@ -721,15 +723,25 @@ pub fn print_diagnostics(
     warnings: &[SourceDiagnostic],
     format: DiagnosticFormat,
 ) -> Result<(), codespan_reporting::files::Error> {
-    typst_kit::diagnostics::emit(
-        &mut terminal::out(),
-        world,
-        errors.iter().chain(warnings),
-        match format {
-            DiagnosticFormat::Human => typst_kit::diagnostics::DiagnosticFormat::Human,
-            DiagnosticFormat::Short => typst_kit::diagnostics::DiagnosticFormat::Short,
-        },
-    )
+    let diagnostics = errors.iter().chain(warnings);
+    match format {
+        DiagnosticFormat::Human => typst_kit::diagnostics::emit(
+            &mut terminal::out(),
+            world,
+            diagnostics,
+            typst_kit::diagnostics::DiagnosticFormat::Human,
+        ),
+        DiagnosticFormat::Short => typst_kit::diagnostics::emit(
+            &mut terminal::out(),
+            world,
+            diagnostics,
+            typst_kit::diagnostics::DiagnosticFormat::Short,
+        ),
+        DiagnosticFormat::Json => {
+            typst_kit::diagnostics::emit_json(&mut terminal::out(), world, diagnostics)
+                .map_err(codespan_reporting::files::Error::Io)
+        }
+    }
 }
 
 impl From<PdfStandard> for typst_pdf::PdfStandard {

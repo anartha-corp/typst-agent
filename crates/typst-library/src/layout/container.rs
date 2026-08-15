@@ -297,6 +297,23 @@ pub struct BlockElem {
     #[default(true)]
     pub breakable: bool,
 
+    /// Content to prepend to every fragment of the block after the first
+    /// when it breaks across pages or columns.
+    ///
+    /// This can be used for continuation headers of long tables, for
+    /// instance. It only affects breakable blocks.
+    ///
+    /// ```example
+    /// #set page(height: 9em)
+    /// #set text(size: 8pt)
+    /// #block(
+    ///   breakable: true,
+    ///   continuation: [_Continued_],
+    ///   lorem(30),
+    /// )
+    /// ```
+    pub continuation: Option<Content>,
+
     /// The block's background color. See the
     /// @rect.fill[rectangle's documentation] for more details.
     pub fill: Option<Paint>,

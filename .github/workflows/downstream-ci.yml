@@ -85,7 +85,11 @@ jobs:
           )"
           paths_json="$(jq -Rn --arg paths "$paths" '$paths | split("\n") | map(select(length > 0))')"
           echo "base=$base" >> "$GITHUB_OUTPUT"
-          echo "paths=$paths_json" >> "$GITHUB_OUTPUT"
+          {
+            echo "paths<<EOF"
+            echo "$paths_json"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
           if [[ "$paths_json" == '[]' ]]; then
             echo 'changed=false' >> "$GITHUB_OUTPUT"
           else

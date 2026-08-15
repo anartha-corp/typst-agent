@@ -191,19 +191,28 @@ impl<'a> Collector<'a, '_, '_> {
 
         // Determine whether to prevent widow and orphans.
         let len = lines.len();
-        let prevent_orphans =
-            costs.orphan() > Ratio::zero() && len >= 2 && !lines[1].is_empty();
-        let prevent_widows =
-            costs.widow() > Ratio::zero() && len >= 2 && !lines[len - 2].is_empty();
-        let prevent_all = len == 3 && prevent_orphans && prevent_widows;
+        let orphan_count = styles.get(ParElem::orphans).get();
+        let widow_count = styles.get(ParElem::widows).get();
+        let prevent_orphans = orphan_count >= 2
+            && costs.orphan() > Ratio::zero()
+            && len >= orphan_count
+            && lines[1..orphan_count].iter().all(|line| !line.is_empty());
+        let prevent_widows = widow_count >= 2
+            && costs.widow() > Ratio::zero()
+            && len >= widow_count
+            && lines[len - widow_count..len - 1].iter().all(|line| !line.is_empty());
+        // If the requirements overlap, the paragraph must move as a whole.
+        let prevent_all =
+            prevent_orphans && prevent_widows && len < orphan_count + widow_count;
 
         // Store the heights of lines at the edges because we'll potentially
         // need these later when `lines` is already moved.
         let height_at = |i| lines.get(i).map(Frame::height).unwrap_or_default();
-        let front_1 = height_at(0);
-        let front_2 = height_at(1);
-        let back_2 = height_at(len.saturating_sub(2));
-        let back_1 = height_at(len.saturating_sub(1));
+        let front = (0..orphan_count).map(height_at).sum::<Abs>();
+        let back = (0..widow_count)
+            .map(|i| height_at(len.saturating_sub(widow_count) + i))
+            .sum::<Abs>();
+        let total = (0..len).map(height_at).sum::<Abs>();
 
         for (i, frame) in lines.into_iter().enumerate() {
             if i > 0 {
@@ -211,15 +220,16 @@ impl<'a> Collector<'a, '_, '_> {
             }
 
             // To prevent widows and orphans, we require enough space for
-            // - all lines if it's just three
-            // - the first two lines if we're at the first line
-            // - the last two lines if we're at the second to last line
+            // - all lines if the requirements overlap
+            // - the first `orphans` lines if we're at the first line
+            // - the last `widows` lines if we're at the first line that
+            //   would otherwise be left alone
             let need = if prevent_all && i == 0 {
-                front_1 + leading + front_2 + leading + back_1
+                total + leading * (len - 1) as f64
             } else if prevent_orphans && i == 0 {
-                front_1 + leading + front_2
-            } else if prevent_widows && i >= 2 && i + 2 == len {
-                back_2 + leading + back_1
+                front + leading * (orphan_count - 1) as f64
+            } else if prevent_widows && !prevent_all && i + widow_count == len {
+                back + leading * (widow_count - 1) as f64
             } else {
                 frame.height()
             };

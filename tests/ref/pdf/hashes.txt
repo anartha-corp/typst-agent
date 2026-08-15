@@ -1517,6 +1517,8 @@ d95885370057fafbec92bc6c78a19eef par-hanging-indent-rtl
 0e0bd10f5ca15dec4e7c8b17822c1357 par-hanging-indent-semantic
 d19daf798d5ad2500b0c4bd503523a69 par-leading-and-spacing
 493953ae135d1f8cd7a106b17c4da5bb par-metadata-after-trimmed-space
+4c84e2bd8419d65a031595f5a9131eda par-orphans-default
+0e9584513c53f8053c4a2231576c8974 par-orphans-one
 bdc6d86984d0182d1a47409cff68e327 par-semantic
 1a0df16bb4732c8430776d3b35e11b6f par-semantic-align
 62c49cd07b433999f933f96c7971e645 par-semantic-tag
@@ -1524,6 +1526,9 @@ a1bdb99a562d2db97dace81f9b42c711 par-show-children
 61c9dd3b4a1d2bbd774557a1fc16838e par-show-styles
 a64fdf9e65b08988b5332f472e0810bc par-spacing-and-first-line-indent
 c8dfdb306c5bfaef407e5d566743952b par-trailing-whitespace
+06c864458f63e6a576a2b60ec356f337 par-widows-default
+038ac68601f829eeb1430a9e70cde73e par-widows-one
+89c4ed712ba1554c335c57d1998836c5 par-widows-three
 3a1ed824e4aad2d224bf8b639543dbac parser-backtracking-destructuring-whitespace
 8feb968e768955c679562662c69c7ee0 pdf-validation-multiple-standards
 bf3e8999bb8e0e5b671dea8b92af3f16 place-basic

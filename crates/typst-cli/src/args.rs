@@ -635,9 +635,32 @@ pub enum DiagnosticFormat {
     #[default]
     Human,
     Short,
+    /// Emits diagnostics as JSON.
+    ///
+    /// Each emission is a single compact JSON array on one line containing
+    /// objects with `severity`, `message`, `span`, `hints`, and `trace`
+    /// fields. A span is `null` when detached and otherwise has a `file`
+    /// (relative to the working directory), zero-based byte `start` and `end`
+    /// offsets, and one-based `line` and `column` numbers. In watch mode, the
+    /// human status banner is suppressed so that standard error only contains
+    /// JSON. The schema is experimental and may change in minor releases.
+    Json,
 }
 
 display_possible_values!(DiagnosticFormat);
+
+impl CliArguments {
+    /// The diagnostic format of the executed command, if it has one.
+    pub fn diagnostic_format(&self) -> DiagnosticFormat {
+        match &self.command {
+            Command::Compile(command) => command.args.process.diagnostic_format,
+            Command::Watch(command) => command.args.process.diagnostic_format,
+            Command::Query(command) => command.process.diagnostic_format,
+            Command::Eval(command) => command.process.diagnostic_format,
+            _ => DiagnosticFormat::Human,
+        }
+    }
+}
 
 /// An in-development feature that may be changed or removed at any time.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, ValueEnum, Serialize)]

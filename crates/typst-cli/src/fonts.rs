@@ -47,7 +47,9 @@ pub fn discover_fonts(args: &FontArgs) -> FontStore {
         fonts.extend(fonts::embedded());
     }
 
-    for path in &args.font_paths {
+    // Empty values are accepted by the argument parser and simply contribute
+    // no additional font paths (upstream issue #6183).
+    for path in args.font_paths.iter().filter(|path| !path.as_os_str().is_empty()) {
         fonts.extend(fonts::scan(path));
     }
 

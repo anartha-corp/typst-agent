@@ -465,12 +465,14 @@ pub struct FontArgs {
     /// Adds additional directories that are recursively searched for fonts.
     ///
     /// If multiple paths are specified, they are separated by the system's path
-    /// separator (`:` on Unix-like systems and `;` on Windows).
+    /// separator (`:` on Unix-like systems and `;` on Windows). Empty values
+    /// are accepted and simply contribute no additional font paths.
     #[clap(
         long = "font-path",
         env = "TYPST_FONT_PATHS",
         value_name = "DIR",
         value_delimiter = ENV_PATH_SEP,
+        value_parser = font_path_value_parser(),
     )]
     pub font_paths: Vec<PathBuf>,
 
@@ -822,6 +824,18 @@ fn output_value_parser() -> impl TypedValueParser<Value = Output> {
         } else {
             Ok(Output::Path(value.into()))
         }
+    })
+}
+
+/// The clap value parser used by `FontArgs.font_paths`.
+///
+/// Accepts empty values so that `--font-path ""` and `TYPST_FONT_PATHS=`
+/// resolve to no additional font paths instead of failing with
+/// "a value is required" (upstream issue #6183). Empty paths are filtered out
+/// when the fonts are discovered.
+fn font_path_value_parser() -> impl TypedValueParser<Value = PathBuf> {
+    clap::builder::OsStringValueParser::new().try_map(|value| -> Result<_, clap::Error> {
+        Ok(PathBuf::from(value))
     })
 }
 

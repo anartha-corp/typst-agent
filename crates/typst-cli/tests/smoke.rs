@@ -112,6 +112,32 @@ fn test_fonts_path() {
 }
 
 #[test]
+fn test_fonts_path_empty() {
+    // Empty font path values must resolve to no additional font paths instead
+    // of failing with "a value is required" (upstream issue #6183).
+    exec()
+        .arg("fonts")
+        .arg("--ignore-embedded-fonts")
+        .arg("--font-path")
+        .arg("")
+        .must_succeed();
+
+    exec()
+        .arg("fonts")
+        .arg("--ignore-embedded-fonts")
+        .env("TYPST_FONT_PATHS", "")
+        .must_succeed();
+
+    // A separator-only environment variable must also resolve to no paths.
+    let separator = if cfg!(windows) { ";" } else { ":" };
+    exec()
+        .arg("fonts")
+        .arg("--ignore-embedded-fonts")
+        .env("TYPST_FONT_PATHS", separator)
+        .must_succeed();
+}
+
+#[test]
 fn test_info() {
     let output = exec().arg("info").must_succeed();
     output.stderr.must_start_with("Version");

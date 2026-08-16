@@ -110,6 +110,12 @@ struct BacklogArgs {
     /// Run only the deterministic scoring self-check.
     #[arg(long)]
     self_check: bool,
+    /// Build an investigation pack for one upstream issue instead of scoring.
+    #[arg(long)]
+    investigate: Option<u64>,
+    /// Cross-check registry lifecycles against downstream git history.
+    #[arg(long)]
+    audit: bool,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -446,6 +452,8 @@ enum EvalAgentCommand {
     ReviewPack,
     UpstreamCheck,
     Backlog,
+    BacklogInvestigate,
+    BacklogAudit,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1317,9 +1325,37 @@ struct SnapshotProvenance {
 struct SnapshotIssue {
     number: u64,
     #[serde(default)]
+    title: String,
+    #[serde(default)]
+    state: String,
+    #[serde(default)]
+    labels: Vec<String>,
+    #[serde(default)]
     reactions: u64,
     #[serde(default)]
     comments: u64,
+    #[serde(default)]
+    created_at: String,
+    #[serde(default)]
+    updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SnapshotComment {
+    #[serde(default)]
+    author: String,
+    #[serde(default)]
+    created_at: String,
+    #[serde(default)]
+    body: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SnapshotCrossref {
+    #[serde(default)]
+    references: Vec<u64>,
+    #[serde(default)]
+    closed_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1374,6 +1410,14 @@ struct RegistryIssue {
     exclude_reason: String,
     #[serde(default)]
     human_override: String,
+    #[serde(default)]
+    curated_at: String,
+    #[serde(default)]
+    downstream_pr: Option<u64>,
+    #[serde(default)]
+    shipped_sha: Option<String>,
+    #[serde(default)]
+    upstream_equivalent: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1387,6 +1431,8 @@ struct BacklogEntry {
     stance: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     subsystem: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    state: String,
     tier: &'static str,
     demand: u8,
     confidence: u8,
@@ -1394,6 +1440,12 @@ struct BacklogEntry {
     impact: u8,
     burden: u8,
     score: u64,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    curated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    downstream_pr: Option<u64>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    upstream_equivalent: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     note: String,
 }
@@ -1414,6 +1466,8 @@ struct BacklogRecord {
     scored: usize,
     excluded: usize,
     unscored: Vec<String>,
+    upstream_closed: Vec<String>,
+    stale: Vec<String>,
     tier_a: Vec<BacklogEntry>,
     tier_b: Vec<BacklogEntry>,
     tier_c: Vec<BacklogEntry>,
@@ -1428,12 +1482,56 @@ struct BacklogSelfCheck {
     scored: usize,
     excluded: usize,
     unscored: usize,
+    upstream_closed: usize,
+    stale: usize,
     tier_a: usize,
     tier_b: usize,
     tier_c: usize,
     reference_mines: Vec<String>,
     known_bad: Vec<String>,
 }
+
+#[derive(Debug, Serialize)]
+struct InvestigateReport {
+    #[serde(rename = "ref")]
+    reference: String,
+    number: u64,
+    title: String,
+    state: String,
+    labels: Vec<String>,
+    created_at: String,
+    updated_at: String,
+    demand: u8,
+    registry_status: Option<String>,
+    registry_stance: Option<String>,
+    registry_subsystem: Option<String>,
+    registry_note: Option<String>,
+    maintainer_comments: Vec<SnapshotComment>,
+    comments: Vec<SnapshotComment>,
+    crossrefs: Vec<u64>,
+    crossref_titles: Vec<String>,
+    subsystem_notes: Vec<String>,
+    area_guide: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AuditEntry {
+    #[serde(rename = "ref")]
+    reference: String,
+    number: u64,
+    status: String,
+    ok: bool,
+    detail: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AuditReport {
+    status: &'static str,
+    checked: usize,
+    violations: Vec<AuditEntry>,
+}
+
+const VALID_STANCES: [&str; 5] = ["endorsing", "neutral", "skeptical", "planned", "none"];
 
 fn demand_grade(reactions: u64, comments: u64) -> u8 {
     if reactions >= 100 || comments >= 30 {
@@ -1542,12 +1640,27 @@ fn backlog(args: &BacklogArgs) -> AppResult<Value> {
     let not_planned_set =
         not_planned.iter().map(|entry| entry.number).collect::<BTreeSet<_>>();
 
+    if let Some(number) = args.investigate {
+        return backlog_investigate(
+            &repo,
+            &snapshot_dir,
+            &registry,
+            &demand_by_number,
+            number,
+        );
+    }
+    if args.audit {
+        return backlog_audit(&repo, &registry);
+    }
+
     let mut seen = BTreeSet::new();
     let mut tier_a = Vec::new();
     let mut tier_b = Vec::new();
     let mut tier_c = Vec::new();
     let mut excluded = Vec::new();
     let mut unscored = Vec::new();
+    let mut upstream_closed = Vec::new();
+    let mut stale = Vec::new();
     let mut scores = BTreeMap::new();
 
     for issue in &registry.issues {
@@ -1561,6 +1674,12 @@ fn backlog(args: &BacklogArgs) -> AppResult<Value> {
             return Err(AppError::invalid(format!(
                 "backlog registry issue {} has an empty title or status",
                 issue.number
+            )));
+        }
+        if !issue.stance.is_empty() && !VALID_STANCES.contains(&issue.stance.as_str()) {
+            return Err(AppError::invalid(format!(
+                "backlog registry issue {} has an unknown stance {:?}",
+                issue.number, issue.stance
             )));
         }
         for (name, factor) in [
@@ -1606,6 +1725,16 @@ fn backlog(args: &BacklogArgs) -> AppResult<Value> {
             });
             continue;
         }
+        if snapshot_issue.state == "closed" {
+            upstream_closed.push(reference);
+            continue;
+        }
+        if !issue.curated_at.is_empty()
+            && days_since(&issue.curated_at, &provenance.snapshot_date)
+                .is_none_or(|days| days > 28)
+        {
+            stale.push(reference.clone());
+        }
 
         let score = backlog_score(
             demand,
@@ -1622,6 +1751,7 @@ fn backlog(args: &BacklogArgs) -> AppResult<Value> {
             status: issue.status.clone(),
             stance: issue.stance.clone(),
             subsystem: issue.subsystem.clone(),
+            state: snapshot_issue.state.clone(),
             tier,
             demand,
             confidence: issue.confidence,
@@ -1629,6 +1759,9 @@ fn backlog(args: &BacklogArgs) -> AppResult<Value> {
             impact: issue.impact,
             burden: issue.burden,
             score,
+            curated_at: issue.curated_at.clone(),
+            downstream_pr: issue.downstream_pr,
+            upstream_equivalent: issue.upstream_equivalent.clone(),
             note: issue.note.clone(),
         };
         scores.insert(issue.number, tier);
@@ -1696,6 +1829,8 @@ fn backlog(args: &BacklogArgs) -> AppResult<Value> {
             scored: tier_a.len() + tier_b.len() + tier_c.len(),
             excluded: excluded.len(),
             unscored: unscored.len(),
+            upstream_closed: upstream_closed.len(),
+            stale: stale.len(),
             tier_a: tier_a.len(),
             tier_b: tier_b.len(),
             tier_c: tier_c.len(),
@@ -1710,6 +1845,8 @@ fn backlog(args: &BacklogArgs) -> AppResult<Value> {
         scored: tier_a.len() + tier_b.len() + tier_c.len(),
         excluded: excluded.len(),
         unscored,
+        upstream_closed,
+        stale,
         tier_a,
         tier_b,
         tier_c,
@@ -1776,6 +1913,312 @@ fn cargo_metadata(repo: &Path) -> AppResult<CargoMetadata> {
         .ok_or_else(|| AppError::authority("cargo metadata JSON is incomplete"))?;
     serde_json::from_str(&text[start..=end])
         .map_err(|error| AppError::authority(format!("invalid cargo metadata: {error}")))
+}
+
+/// Build a deterministic investigation pack for one upstream issue.
+///
+/// The pack assembles snapshot data (issue meta, comments, maintainer
+/// comments, cross-references), the registry entry if present, and the
+/// knowledge left by earlier mines in the same subsystem. It is input for an
+/// LLM or a human curator; the resulting annotation proposal must land in the
+/// registry through a reviewed PR, after which `cargo agent backlog
+/// --self-check` validates it. The scorer itself stays model-free.
+fn backlog_investigate(
+    repo: &Path,
+    snapshot_dir: &Path,
+    registry: &RegistryFile,
+    demand_by_number: &BTreeMap<u64, &SnapshotIssue>,
+    number: u64,
+) -> AppResult<Value> {
+    let snapshot_issue = demand_by_number.get(&number).copied().ok_or_else(|| {
+        AppError::invalid(format!(
+            "issue #{number} is not in the snapshot (run scripts/backlog-fetch.sh first)"
+        ))
+    })?;
+    let registry_issue = registry.issues.iter().find(|issue| issue.number == number);
+
+    let read_comments = |name: &str| -> AppResult<Vec<SnapshotComment>> {
+        let path = snapshot_dir.join(name);
+        let Ok(text) = fs::read_to_string(&path) else {
+            return Ok(Vec::new());
+        };
+        serde_json::from_str(&text)
+            .map_err(|error| AppError::invalid(format!("invalid {name}: {error}")))
+    };
+    let comments = read_comments(&format!("comments/{number}.json"))?;
+
+    let maintainers: Vec<String> = {
+        let path = snapshot_dir.join("maintainers.json");
+        match fs::read_to_string(&path) {
+            Ok(text) => serde_json::from_str(&text).map_err(|error| {
+                AppError::invalid(format!("invalid maintainers.json: {error}"))
+            })?,
+            Err(_) => Vec::new(),
+        }
+    };
+    let maintainer_comments = comments
+        .iter()
+        .filter(|comment| maintainers.iter().any(|login| &comment.author == login))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let crossrefs: SnapshotCrossref = {
+        let path = snapshot_dir.join(format!("crossrefs/{number}.json"));
+        match fs::read_to_string(&path) {
+            Ok(text) => serde_json::from_str(&text).map_err(|error| {
+                AppError::invalid(format!("invalid crossrefs/{number}.json: {error}"))
+            })?,
+            Err(_) => SnapshotCrossref { references: Vec::new(), closed_reason: None },
+        }
+    };
+    let crossref_titles = crossrefs
+        .references
+        .iter()
+        .filter_map(|reference| {
+            demand_by_number
+                .get(reference)
+                .map(|issue| format!("#{reference} {}", truncate_title(&issue.title)))
+        })
+        .collect();
+
+    let subsystem = registry_issue
+        .map(|issue| issue.subsystem.as_str())
+        .filter(|subsystem| !subsystem.is_empty())
+        .unwrap_or("unknown");
+    let subsystem_notes = registry
+        .issues
+        .iter()
+        .filter(|issue| issue.number != number && issue.subsystem == subsystem)
+        .filter_map(|issue| {
+            if issue.note.trim().is_empty() {
+                None
+            } else {
+                Some(format!("#{} ({}): {}", issue.number, issue.status, issue.note))
+            }
+        })
+        .collect();
+    let area_guide = match subsystem {
+        "layout" | "styling" => ".agents/areas/layout.md",
+        "cli" => ".agents/areas/cli.md",
+        "pdf" | "visualize" => ".agents/areas/output.md",
+        "devops" => ".agents/areas/release.md",
+        _ => ".agents/areas/evaluation.md",
+    }
+    .to_owned();
+
+    let report = InvestigateReport {
+        reference: format!("#{number}"),
+        number,
+        title: registry_issue
+            .map(|issue| issue.title.clone())
+            .or_else(|| {
+                (!snapshot_issue.title.is_empty()).then(|| snapshot_issue.title.clone())
+            })
+            .unwrap_or_else(|| format!("untracked issue #{number}")),
+        state: snapshot_issue.state.clone(),
+        labels: snapshot_issue.labels.clone(),
+        created_at: snapshot_issue.created_at.clone(),
+        updated_at: snapshot_issue.updated_at.clone(),
+        demand: demand_grade(snapshot_issue.reactions, snapshot_issue.comments),
+        registry_status: registry_issue.map(|issue| issue.status.clone()),
+        registry_stance: registry_issue.map(|issue| issue.stance.clone()),
+        registry_subsystem: registry_issue.map(|issue| issue.subsystem.clone()),
+        registry_note: registry_issue.map(|issue| issue.note.clone()),
+        maintainer_comments,
+        comments,
+        crossrefs: crossrefs.references,
+        crossref_titles,
+        subsystem_notes,
+        area_guide,
+    };
+
+    let directory = repo.join(".tmp/agent/backlog");
+    fs::create_dir_all(&directory)
+        .map_err(|error| AppError::authority(error.to_string()))?;
+    let path = directory.join(format!("investigate-{number}.json"));
+    let bytes = serde_json::to_vec_pretty(&report)
+        .map_err(|error| AppError::invalid(error.to_string()))?;
+    fs::write(&path, bytes).map_err(|error| AppError::authority(error.to_string()))?;
+
+    let template = investigation_template(&report);
+    let template_path = directory.join(format!("investigate-{number}.md"));
+    fs::write(&template_path, template)
+        .map_err(|error| AppError::authority(error.to_string()))?;
+
+    Ok(json_value(report)?)
+}
+
+fn truncate_title(title: &str) -> String {
+    let mut truncated = title.chars().take(60).collect::<String>();
+    if title.chars().count() > 60 {
+        truncated.push('…');
+    }
+    truncated
+}
+
+fn investigation_template(report: &InvestigateReport) -> String {
+    let mut template = format!(
+        "# Investigation pack: {}\n\n\
+         - state: {}\n\
+         - labels: {}\n\
+         - created: {} | updated: {}\n\
+         - demand grade: {}\n\
+         - registry: status={} stance={} subsystem={}\n\
+         - cross-references: {}\n\
+         - area guide: {}\n\n",
+        report.reference,
+        if report.state.is_empty() { "unknown" } else { &report.state },
+        report.labels.join(", "),
+        report.created_at,
+        report.updated_at,
+        report.demand,
+        report.registry_status.as_deref().unwrap_or("uncurated"),
+        report.registry_stance.as_deref().unwrap_or("none"),
+        report.registry_subsystem.as_deref().unwrap_or("unknown"),
+        report
+            .crossref_titles
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(", "),
+        report.area_guide,
+    );
+    if !report.maintainer_comments.is_empty() {
+        template.push_str("## Maintainer comments\n\n");
+        for comment in &report.maintainer_comments {
+            template.push_str(&format!(
+                "- {} ({}): {}\n",
+                comment.author, comment.created_at, comment.body
+            ));
+        }
+        template.push('\n');
+    }
+    if !report.subsystem_notes.is_empty() {
+        template.push_str("## Earlier mines in this subsystem\n\n");
+        for note in &report.subsystem_notes {
+            template.push_str(&format!("- {note}\n"));
+        }
+        template.push('\n');
+    }
+    template.push_str(
+        "## Annotation proposal (fill in, then PR to .agents/backlog/registry.toml)\n\n\
+         ```toml\n\
+         status = \"candidate\"  # candidate|mined|shipped|watch|excluded|upstream-shipped\n\
+         stance = \"none\"       # endorsing|neutral|skeptical|planned|none\n\
+         subsystem = \"\"\n\
+         confidence = 0         # 1..=5\n\
+         safety = 0             # 1..=5\n\
+         impact = 0             # 1..=5\n\
+         burden = 0             # 1..=5\n\
+         note = \"\"\n\
+         exclude_reason = \"\"   # only for hard exclusions\n\
+         curated_at = \"YYYY-MM-DD\"\n\
+         upstream_equivalent = \"\"\n\
+         ```\n\n\
+         Checklist: API shape, drop-when-upstream plan, testability,\n\
+         failure cases. `cargo agent backlog --self-check` validates the result.\n",
+    );
+    template
+}
+
+/// Cross-check registry lifecycles against downstream git history.
+///
+/// `shipped` entries must have a downstream PR and a commit tagged `(#NNNN)`,
+/// `mined` entries must have a downstream PR, and unworked statuses must not
+/// carry one. Violations fail the command with exit code 4.
+fn backlog_audit(repo: &Path, registry: &RegistryFile) -> AppResult<Value> {
+    let mut violations = Vec::new();
+    for issue in &registry.issues {
+        let reference = format!("#{}", issue.number);
+        let pr = issue.downstream_pr;
+        let mut ok = true;
+        let mut detail = String::new();
+        match issue.status.as_str() {
+            "shipped" => {
+                let Some(pr) = pr else {
+                    ok = false;
+                    detail = "shipped without a downstream PR".into();
+                    violations.push(AuditEntry {
+                        reference: reference.clone(),
+                        number: issue.number,
+                        status: issue.status.clone(),
+                        ok,
+                        detail,
+                    });
+                    continue;
+                };
+                let tagged = run_command(
+                    "git",
+                    [
+                        "log",
+                        "--all",
+                        "--format=%s",
+                        &format!("--grep=(#{})", issue.number),
+                    ],
+                    Some(repo),
+                );
+                match tagged {
+                    Ok(output)
+                        if output.status == Some(0)
+                            && !output.stdout.trim().is_empty() =>
+                    {
+                        detail = format!(
+                            "commit tagged (#{}) found via PR #{pr}",
+                            issue.number
+                        );
+                    }
+                    _ => {
+                        ok = false;
+                        detail = format!(
+                            "no commit tagged (#{}) in downstream history",
+                            issue.number
+                        );
+                    }
+                }
+            }
+            "mined" => match pr {
+                Some(pr) => detail = format!("downstream PR #{pr}"),
+                None => {
+                    ok = false;
+                    detail = "mined without a downstream PR".into();
+                }
+            },
+            "candidate" | "watch" | "upstream-shipped" | "excluded" => {
+                if let Some(pr) = pr {
+                    ok = false;
+                    detail = format!("unworked status carries downstream PR #{pr}");
+                }
+            }
+            other => {
+                ok = false;
+                detail = format!("unknown status {other:?}");
+            }
+        }
+        if !ok {
+            violations.push(AuditEntry {
+                reference,
+                number: issue.number,
+                status: issue.status.clone(),
+                ok,
+                detail,
+            });
+        }
+    }
+    if !violations.is_empty() {
+        return Err(AppError::verification(format!(
+            "backlog lifecycle audit failed: {}",
+            violations
+                .iter()
+                .map(|entry| format!("{} {}", entry.reference, entry.detail))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )));
+    }
+    Ok(json_value(AuditReport {
+        status: "passed",
+        checked: registry.issues.len(),
+        violations,
+    })?)
 }
 
 fn policy_check() -> AppResult<PolicyReport> {
@@ -2426,6 +2869,8 @@ fn eval() -> AppResult<Value> {
         ));
     }
     let required_tasks = [
+        "backlog-audit-golden",
+        "backlog-investigate-golden",
         "backlog-score-golden",
         "navigation",
         "parser-span-change",
@@ -2869,6 +3314,25 @@ fn run_eval_agent(
                 "backlog".into(),
                 "--snapshot".into(),
                 "evals/fixtures/backlog/golden".into(),
+            ]);
+            "backlog"
+        }
+        EvalAgentCommand::BacklogInvestigate => {
+            args.extend([
+                "backlog".into(),
+                "--snapshot".into(),
+                "evals/fixtures/backlog/golden".into(),
+                "--investigate".into(),
+                "2102".into(),
+            ]);
+            "backlog"
+        }
+        EvalAgentCommand::BacklogAudit => {
+            args.extend([
+                "backlog".into(),
+                "--snapshot".into(),
+                "evals/fixtures/backlog/golden".into(),
+                "--audit".into(),
             ]);
             "backlog"
         }
@@ -3574,5 +4038,17 @@ expected = 0
         assert_eq!(days_since("2023-02-28", "2023-03-01"), Some(1));
         assert_eq!(days_since("garbage", "2026-08-16"), None);
         assert_eq!(days_since("2026-13-01", "2026-08-16"), None);
+    }
+
+    #[test]
+    fn backlog_stance_and_title_helpers_follow_the_contract() {
+        assert!(VALID_STANCES.contains(&"endorsing"));
+        assert!(VALID_STANCES.contains(&"none"));
+        assert_eq!(VALID_STANCES.len(), 5);
+        assert_eq!(truncate_title("short"), "short");
+        let long = "x".repeat(80);
+        let truncated = truncate_title(&long);
+        assert_eq!(truncated.chars().count(), 61);
+        assert!(truncated.ends_with('…'));
     }
 }

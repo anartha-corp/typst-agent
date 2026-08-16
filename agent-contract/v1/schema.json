@@ -430,6 +430,8 @@
         "scored",
         "excluded",
         "unscored",
+        "upstream_closed",
+        "stale",
         "tier_a",
         "tier_b",
         "tier_c",
@@ -442,6 +444,16 @@
         "scored": { "type": "integer", "minimum": 0 },
         "excluded": { "type": "integer", "minimum": 0 },
         "unscored": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NonEmptyString" },
+          "uniqueItems": true
+        },
+        "upstream_closed": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NonEmptyString" },
+          "uniqueItems": true
+        },
+        "stale": {
           "type": "array",
           "items": { "$ref": "#/$defs/NonEmptyString" },
           "uniqueItems": true
@@ -478,6 +490,7 @@
         "status": { "$ref": "#/$defs/NonEmptyString" },
         "stance": { "$ref": "#/$defs/NonEmptyString" },
         "subsystem": { "$ref": "#/$defs/NonEmptyString" },
+        "state": { "enum": ["open", "closed"] },
         "tier": { "enum": ["a", "b", "c"] },
         "demand": { "type": "integer", "minimum": 1, "maximum": 5 },
         "confidence": { "type": "integer", "minimum": 1, "maximum": 5 },
@@ -485,6 +498,9 @@
         "impact": { "type": "integer", "minimum": 1, "maximum": 5 },
         "burden": { "type": "integer", "minimum": 1, "maximum": 5 },
         "score": { "type": "integer", "minimum": 0 },
+        "curated_at": { "$ref": "#/$defs/NonEmptyString" },
+        "downstream_pr": { "type": "integer", "minimum": 1 },
+        "upstream_equivalent": { "$ref": "#/$defs/NonEmptyString" },
         "note": { "$ref": "#/$defs/NonEmptyString" }
       }
     },

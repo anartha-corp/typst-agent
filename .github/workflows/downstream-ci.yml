@@ -51,6 +51,7 @@ jobs:
         run: |
           cargo agent doctor --format json
           cargo agent policy-check --format json
+          cargo agent backlog --self-check --snapshot evals/fixtures/backlog/golden --format json
       - name: Diff-aware PR verification
         if: ${{ needs.reference-detect.outputs.changed != 'true' }}
         run: cargo agent verify --tier pr --base "${{ steps.base.outputs.sha }}" --format json

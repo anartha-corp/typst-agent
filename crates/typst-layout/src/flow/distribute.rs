@@ -407,9 +407,30 @@ impl<'a, 'b> Distributor<'a, 'b, '_, '_, '_> {
             return Err(Stop::Finish(false));
         }
 
+        // Lay out the continuation prelude, if any, and reduce the region
+        // heights so that the block's content fits below it.
+        let mut prelude_backlog = Vec::new();
+        let (prelude, pod) =
+            spill.prelude(self.composer.engine, pod, &mut prelude_backlog)?;
+
         // Lay out the spilled remains.
         let align = spill.align();
         let (frame, spill) = spill.layout(self.composer.engine, pod)?;
+
+        // Stack the continuation prelude on top of the spilled frame.
+        let frame = match prelude {
+            Some(prelude) => {
+                let prelude_height = prelude.height();
+                let mut combined = Frame::soft(Size::new(
+                    frame.width(),
+                    prelude_height + frame.height(),
+                ));
+                combined.push_frame(Point::zero(), prelude);
+                combined.push_frame(Point::with_y(prelude_height), frame);
+                combined
+            }
+            None => frame,
+        };
         self.frame(frame, align, false, true)?;
 
         // If there's still more, save it into the `spill` and finish the

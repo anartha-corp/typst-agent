@@ -1,0 +1,19 @@
+id = "backlog-investigate-golden"
+scope = [".agents/backlog/registry.toml"]
+
+[[operations]]
+kind = "agent"
+capture = "investigate"
+command = "backlog-investigate"
+paths = []
+
+[[graders]]
+kind = "exit-code"
+capture = "investigate"
+expected = 0
+
+[[graders]]
+kind = "json-contains"
+capture = "investigate"
+pointer = "/payload"
+values = ["#2102", "laurmaedje", "2101", "mined"]

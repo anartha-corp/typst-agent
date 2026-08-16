@@ -29,6 +29,8 @@ safety = 5
 impact = 4
 burden = 1
 note = "good first issue + good contribution; laurmaedje suggests annotating the argument at the call site; downstream patch detects args.span == func.span() and reports 'function received more arguments than it expected'"
+curated_at = "2026-08-16"
+downstream_pr = 30
 
 [[issues]]
 number = 3679
@@ -53,6 +55,8 @@ safety = 5
 impact = 4
 burden = 1
 note = "reference mine; downstream PR #22/#25 in flight"
+curated_at = "2026-08-16"
+downstream_pr = 25
 
 [[issues]]
 number = 2722
@@ -65,6 +69,9 @@ safety = 5
 impact = 3
 burden = 2
 note = "reference mine; shipped downstream as page(marginals) in PR #23"
+curated_at = "2026-08-16"
+downstream_pr = 23
+shipped_sha = "18eb6d146d16f47462f907a2e90df6749f7329df"
 
 [[issues]]
 number = 5314
@@ -101,6 +108,8 @@ safety = 5
 impact = 2
 burden = 1
 note = "laurmaedje: accepting empty values and returning an empty vector; downstream patch adds a font-path value parser and filters empty paths in discover_fonts"
+curated_at = "2026-08-16"
+downstream_pr = 30
 
 [[issues]]
 number = 3640
@@ -593,3 +602,17 @@ safety = 5
 impact = 4
 burden = 2
 note = "auto-excluded: upstream closed this as not planned; packaging remains a downstream initiative"
+
+[[issues]]
+number = 971
+title = "Add a path type"
+status = "upstream-shipped"
+stance = "endorsing"
+subsystem = "scripting"
+confidence = 4
+safety = 5
+impact = 4
+burden = 2
+note = "closed upstream; watch candidates that were blocked on this type (e.g. #2025)"
+curated_at = "2026-08-16"
+upstream_equivalent = "typst/typst#971"

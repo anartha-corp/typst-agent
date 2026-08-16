@@ -1,0 +1,18 @@
+id = "backlog-audit-golden"
+scope = [".agents/backlog/registry.toml"]
+
+[[operations]]
+kind = "agent"
+capture = "audit"
+command = "backlog-audit"
+paths = []
+
+[[graders]]
+kind = "exit-code"
+capture = "audit"
+expected = 0
+
+[[graders]]
+kind = "json-exists"
+capture = "audit"
+pointer = "/payload/status"

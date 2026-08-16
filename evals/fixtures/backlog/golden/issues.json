@@ -562,5 +562,32 @@
     "created_at": "2020-01-01",
     "updated_at": "2026-08-01",
     "is_pr": false
+  },
+  {
+    "number": 971,
+    "title": "Add a path type",
+    "state": "closed",
+    "labels": [
+      "scripting",
+      "change request"
+    ],
+    "reactions": 40,
+    "thumbs_up": 40,
+    "comments": 15,
+    "created_at": "2023-01-01",
+    "updated_at": "2026-01-19",
+    "is_pr": false
+  },
+  {
+    "number": 2101,
+    "title": "Heading numbering with a non-sink function",
+    "state": "closed",
+    "labels": [],
+    "reactions": 3,
+    "thumbs_up": 3,
+    "comments": 2,
+    "created_at": "2023-08-01",
+    "updated_at": "2023-08-10",
+    "is_pr": false
   }
 ]

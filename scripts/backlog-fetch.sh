@@ -53,6 +53,8 @@ log "collecting typst org members"
     gh api orgs/typst/public_members --jq '.[].login' 2>/dev/null || true
     printf 'laurmaedje\nreknih\nelegaanz\nsaecki\n'
 } | sort -u > "$tmp/maintainers.txt"
+jq -R -s 'split("\n") | map(select(length > 0))' "$tmp/maintainers.txt" \
+    > "$out/maintainers.json"
 
 # ---- open issues by demand ranking -----------------------------------------
 log "collecting open issues by reactions and comments"
@@ -129,6 +131,42 @@ while read -r n; do
 done <<< "$ids"
 printf '\n]\n' >> "$out/issues.json"
 
+# ---- per-issue full comments (registry + top demand) -----------------------
+log "collecting per-issue comments"
+mkdir -p "$out/comments"
+jq -s 'map(.[].number) | unique | sort' \
+    "$tmp/by-reactions.json" "$tmp/by-comments.json" "$tmp/registry-ids.json" \
+    > "$tmp/comment-ids.json"
+jq -r '.[0:170][]' "$tmp/comment-ids.json" > "$tmp/comment-ids.txt"
+comment_files=0
+while read -r n; do
+    comments="$(gh api "repos/typst/typst/issues/$n/comments" --paginate \
+        --jq "[.[] | {author: .user.login, created_at: (.created_at[0:10]),
+                     body: (.body | gsub(\"[\n\r]\"; \" \") | .[0:1500])}]" \
+        2>/dev/null || true)"
+    if [[ -n "$comments" ]]; then
+        printf '%s' "$comments" > "$out/comments/$n.json"
+        comment_files=$((comment_files + 1))
+    fi
+done < "$tmp/comment-ids.txt"
+
+# ---- per-issue timeline cross-references (registry + top demand) ------------
+log "collecting timeline cross-references"
+mkdir -p "$out/crossrefs"
+jq -r '.[0:140][]' "$tmp/comment-ids.json" > "$tmp/crossref-ids.txt"
+crossref_files=0
+while read -r n; do
+    crossrefs="$(gh api "repos/typst/typst/issues/$n/timeline" --paginate \
+        --jq "{references: ([.[] | select(.event == \"cross-referenced\") |
+                (.source.issue.number // empty)] | unique | sort),
+               closed_reason: ([.[] | select(.event == \"closed\") |
+                .state_reason // empty] | .[0])}" 2>/dev/null || true)"
+    if [[ -n "$crossrefs" ]]; then
+        printf '%s' "$crossrefs" > "$out/crossrefs/$n.json"
+        crossref_files=$((crossref_files + 1))
+    fi
+done < "$tmp/crossref-ids.txt"
+
 # ---- maintainer comments on the top demand issues --------------------------
 log "collecting maintainer comments"
 maintainer_cond="$(
@@ -164,12 +202,16 @@ jq -n \
     --argjson not_planned "$(jq 'length' "$out/closed-not-planned.json")" \
     --argjson maintainers "$maintainer_count" \
     --argjson comments "$(jq 'length' "$out/maintainer-comments.json")" \
+    --argjson comment_files "$comment_files" \
+    --argjson crossref_files "$crossref_files" \
     '{snapshot_date: $date, upstream_sha: $sha, issue_count: $issues,
       pull_count: $pulls, closed_not_planned_count: $not_planned,
-      maintainer_count: $maintainers, maintainer_comment_count: $comments}' \
+      maintainer_count: $maintainers, maintainer_comment_count: $comments,
+      comment_file_count: $comment_files, crossref_file_count: $crossref_files}' \
     > "$out/provenance.json"
 
 log "snapshot written to $out"
 jq -r '"  snapshot_date=\(.snapshot_date) upstream_sha=\(.upstream_sha // "unavailable")
   issues=\(.issue_count) pulls=\(.pull_count) not_planned=\(.closed_not_planned_count)
-  maintainer_comments=\(.maintainer_comment_count)"' "$out/provenance.json"
+  maintainer_comments=\(.maintainer_comment_count) comment_files=\(.comment_file_count)
+  crossref_files=\(.crossref_file_count)"' "$out/provenance.json"

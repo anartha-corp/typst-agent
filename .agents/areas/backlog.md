@@ -10,8 +10,9 @@ equivalent.
 
 `scripts/backlog-fetch.sh` snapshots, under `.tmp/agent/backlog/raw/` (ignored):
 open issues, open upstream PRs with their linked issues, closed "not planned"
-issues, maintainer logins, and maintainer comments on the top demand issues.
-The script only reads GitHub and never writes to `typst/typst`.
+issues, maintainer logins, maintainer comments, per-issue comments and
+timeline cross-references for the registry plus the top demand issues. The
+script only reads GitHub and never writes to `typst/typst`.
 
 ## Scoring
 
@@ -24,17 +25,34 @@ score = (user demand x implementation confidence x compatibility safety
 
 Demand is derived from snapshot reactions/comments (5: >=100 or >=30; 4: >=40
 or >=20; 3: >=15 or >=10; 2: >=5 or >=4; else 1). The other factors are
-annotated 1-5 in the registry. Tiers: `a` >= 120, `b` >= 48, `c` below.
-Hard exclusions win over any score: registry `exclude_reason`, upstream
+annotated 1-5 in the registry; `stance` must be one of `endorsing`,
+`neutral`, `skeptical`, `planned`, `none`. Tiers: `a` >= 120, `b` >= 48, `c`
+below. Hard exclusions win over any score: registry `exclude_reason`, upstream
 "not planned" closure, and open upstream PRs updated within 180 days that
 link the issue. Calibration references (#2722, #6059) must stay in tier a/b
-and known-bad issues (#1765, #955, #5382) must stay excluded.
+and known-bad issues (#1765, #955, #5382) must stay excluded. Entries whose
+upstream issue is closed are reported as `upstream_closed`, and annotations
+older than 28 days relative to the snapshot as `stale`.
+
+## Curation
+
+`cargo agent backlog --investigate <n>` builds a deterministic context pack
+(issue meta, maintainer and all comments, cross-references, earlier mines in
+the same subsystem, area guide) plus an annotation proposal template under
+`.tmp/agent/backlog/`. An LLM or a human fills the proposal; it lands in the
+registry only through a reviewed PR. The scorer never calls a model.
+
+`cargo agent backlog --audit` cross-checks lifecycles against git history:
+`shipped` needs a downstream PR and a commit tagged `(#NNNN)`, `mined` needs
+a downstream PR, unworked statuses must not carry one.
 
 ## Lifecycle
 
 `candidate` -> `mined` -> `shipped` | `watch` | `excluded` | `upstream-shipped`.
 Every shipped mine keeps a drop-when-upstream plan: drop the patch, add a
-deprecated compat alias, remove the alias after two minor releases.
+deprecated compat alias, remove the alias after two minor releases. When the
+snapshot reports an entry as `upstream_closed`, a human decides between
+dropping the patch and keeping an alias.
 
 ## Checks
 

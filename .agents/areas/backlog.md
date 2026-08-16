@@ -40,3 +40,24 @@ deprecated compat alias, remove the alias after two minor releases.
 
 `cargo agent backlog --self-check` is required for this area. Never mine a
 hard-excluded issue without a recorded human override.
+
+## Known limits (v2 directions)
+
+The v1 scorer is deliberate ranking of curated candidates, not autonomous
+mining; the annotated factors are the human/agent judgment slots. Known
+weaknesses to address in later versions, always as deterministic additions
+rather than a black-box score:
+
+- Demand via reactions/comments is a rough proxy: a flashy 120-thumbs-up issue
+  can be niche while a 4-thumbs-up bug can break a whole document class.
+  Candidate improvements: duplicate-issue clustering, forum/discord mentions,
+  affected-package counts.
+- The upstream-PR exclusion only sees PRs that link the issue and were updated
+  within 180 days. It can miss unlinked fix PRs, design work in discussions,
+  or resumed stale PRs; the weekly snapshot mitigates this only partially.
+- The multiplicative formula punishes a single low factor hard (safety=1 kills
+  the score). This is intentional conservatism, but thresholds (120/48) need
+  recalibration as the registry grows.
+- Future signals worth adding: maintainer sentiment extraction, dependency
+  ownership detection, regression severity, testability, patch deletability,
+  API-surface cost, and affected user class.

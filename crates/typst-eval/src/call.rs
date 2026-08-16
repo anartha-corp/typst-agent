@@ -744,14 +744,14 @@ pub fn eval_closure(
     // called with more arguments than it has parameters, as happens when a
     // show rule or numbering callback is invoked with extra arguments, e.g.
     // `heading(numbering: it => it)` (upstream issue #2102).
-    if let Some(arg) = args.items.first() {
-        if args.span == func.span() {
-            bail!(
-                arg.span,
-                "function received more arguments than it expected";
-                hint: "either add the missing parameters or an argument sink (`..args`)"
-            );
-        }
+    if let Some(arg) = args.items.first()
+        && args.span == func.span()
+    {
+        bail!(
+            arg.span,
+            "function received more arguments than it expected";
+            hint: "either add the missing parameters or an argument sink (`..args`)"
+        );
     }
     args.finish()?;
 

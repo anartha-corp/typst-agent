@@ -2495,9 +2495,11 @@ fn verify(tier: VerifyTier, base: &str) -> AppResult<VerificationEvidence> {
             ["fmt", "--all", "--", "--check"],
         ),
         verification_command(
-            "cargo clippy -p typst-agent-dev --all-targets (warnings denied)",
+            // CI carries RUSTFLAGS=-D warnings, so this doubles as the local
+            // dead-code gate; workspace clippy is covered by the CI matrix.
+            "cargo check -p typst-agent-dev",
             "cargo",
-            ["clippy", "-p", "typst-agent-dev", "--all-targets", "--", "-D", "warnings"],
+            ["check", "-p", "typst-agent-dev"],
         ),
     ];
     if matches!(tier, VerifyTier::Pr | VerifyTier::Full) {

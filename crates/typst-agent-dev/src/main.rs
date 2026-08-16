@@ -1643,7 +1643,7 @@ fn backlog(args: &BacklogArgs) -> AppResult<Value> {
     let excluded_numbers =
         excluded.iter().map(|entry| entry.number).collect::<BTreeSet<_>>();
     for reference in &registry.calibration.reference_mines {
-        match scores.get(reference).map(|tier| *tier) {
+        match scores.get(reference).copied() {
             Some("a" | "b") => {}
             _ => {
                 return Err(AppError::verification(format!(
@@ -1669,7 +1669,7 @@ fn backlog(args: &BacklogArgs) -> AppResult<Value> {
     tier_c.sort_by(|left, right| {
         right.score.cmp(&left.score).then(left.number.cmp(&right.number))
     });
-    excluded.sort_by(|left, right| left.number.cmp(&right.number));
+    excluded.sort_by_key(|entry| entry.number);
     tier_a.truncate(20);
     tier_b.truncate(40);
     tier_c.truncate(40);
@@ -1689,7 +1689,7 @@ fn backlog(args: &BacklogArgs) -> AppResult<Value> {
         .collect();
 
     if args.self_check {
-        return Ok(json_value(BacklogSelfCheck {
+        return json_value(BacklogSelfCheck {
             status: "passed",
             snapshot_date: provenance.snapshot_date,
             upstream_sha: provenance.upstream_sha,
@@ -1701,7 +1701,7 @@ fn backlog(args: &BacklogArgs) -> AppResult<Value> {
             tier_c: tier_c.len(),
             reference_mines,
             known_bad,
-        })?);
+        });
     }
 
     let record = BacklogRecord {

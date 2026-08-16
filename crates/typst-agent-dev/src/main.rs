@@ -1510,6 +1510,7 @@ struct InvestigateReport {
     comments: Vec<SnapshotComment>,
     crossrefs: Vec<u64>,
     crossref_titles: Vec<String>,
+    crossref_closed_reason: Option<String>,
     subsystem_notes: Vec<String>,
     area_guide: String,
 }
@@ -2028,6 +2029,7 @@ fn backlog_investigate(
         comments,
         crossrefs: crossrefs.references,
         crossref_titles,
+        crossref_closed_reason: crossrefs.closed_reason,
         subsystem_notes,
         area_guide,
     };
@@ -2045,7 +2047,7 @@ fn backlog_investigate(
     fs::write(&template_path, template)
         .map_err(|error| AppError::authority(error.to_string()))?;
 
-    Ok(json_value(report)?)
+    json_value(report)
 }
 
 fn truncate_title(title: &str) -> String {
@@ -2166,6 +2168,22 @@ fn backlog_audit(repo: &Path, registry: &RegistryFile) -> AppResult<Value> {
                             "commit tagged (#{}) found via PR #{pr}",
                             issue.number
                         );
+                        if let Some(sha) = &issue.shipped_sha {
+                            let exists = run_command(
+                                "git",
+                                ["cat-file", "-e", &format!("{sha}^{{commit}}")],
+                                Some(repo),
+                            );
+                            match exists {
+                                Ok(output) if output.status == Some(0) => {}
+                                _ => {
+                                    ok = false;
+                                    detail = format!(
+                                        "shipped_sha {sha} is not a commit in downstream history"
+                                    );
+                                }
+                            }
+                        }
                     }
                     _ => {
                         ok = false;
@@ -2214,11 +2232,11 @@ fn backlog_audit(repo: &Path, registry: &RegistryFile) -> AppResult<Value> {
                 .join("; ")
         )));
     }
-    Ok(json_value(AuditReport {
+    json_value(AuditReport {
         status: "passed",
         checked: registry.issues.len(),
         violations,
-    })?)
+    })
 }
 
 fn policy_check() -> AppResult<PolicyReport> {
@@ -2477,9 +2495,9 @@ fn verify(tier: VerifyTier, base: &str) -> AppResult<VerificationEvidence> {
             ["fmt", "--all", "--", "--check"],
         ),
         verification_command(
-            "cargo check -p typst-agent-dev",
+            "cargo clippy -p typst-agent-dev --all-targets (warnings denied)",
             "cargo",
-            ["check", "-p", "typst-agent-dev"],
+            ["clippy", "-p", "typst-agent-dev", "--all-targets", "--", "-D", "warnings"],
         ),
     ];
     if matches!(tier, VerifyTier::Pr | VerifyTier::Full) {

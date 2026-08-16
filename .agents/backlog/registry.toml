@@ -71,6 +71,7 @@ burden = 2
 note = "reference mine; shipped downstream as page(marginals) in PR #23"
 curated_at = "2026-08-16"
 downstream_pr = 23
+shipped_sha = "18eb6d146d16f47462f907a2e90df6749f7329df"
 
 [[issues]]
 number = 5314

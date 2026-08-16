@@ -179,3 +179,12 @@ Cannot be used as @intro
 })
 
 = A
+
+--- issue-2102-numbering-callback-args paged ---
+// A numbering callback that cannot absorb the compiler-generated numbering
+// arguments must report a descriptive error instead of a misleading
+// "unexpected argument" (upstream issue #2102).
+// Error: 25-27 function received more arguments than it expected
+// Hint: 25-27 either add the missing parameters or an argument sink (`..args`)
+#set heading(numbering: it => it)
+== Heading

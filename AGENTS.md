@@ -38,8 +38,14 @@ cargo agent review-pack --base <ref>
 cargo agent policy-check
 cargo agent upstream-check
 cargo agent eval
+cargo agent backlog [--snapshot <dir>] [--registry <path>] [--self-check]
 cargo agent release-manifest
 ```
+
+`cargo agent backlog` scores the upstream golden backlog deterministically from
+a snapshot produced by `scripts/backlog-fetch.sh` (the network-reading helper,
+which writes only under `.tmp/agent/backlog/raw/`) and the annotated registry
+at `.agents/backlog/registry.toml`; see `.agents/areas/backlog.md`.
 
 Exit codes are stable: `0` success, `2` invalid invocation or contract input,
 `3` policy violation, `4` verification failure, and `5` unavailable authority

@@ -61,6 +61,8 @@ enum CommandKind {
     Eval,
     /// Emit a complete source, artifact, and release identity manifest.
     ReleaseManifest(ReleaseManifestArgs),
+    /// Score the mined upstream golden backlog from a frozen snapshot.
+    Backlog(BacklogArgs),
 }
 
 #[derive(Debug, Args)]
@@ -95,6 +97,19 @@ struct ReleaseManifestArgs {
     /// Strict preparation evidence produced by the release workflow.
     #[arg(long, default_value = ".tmp/agent/release/release-input.json")]
     input: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct BacklogArgs {
+    /// Snapshot directory produced by scripts/backlog-fetch.sh.
+    #[arg(long, default_value = ".tmp/agent/backlog/raw")]
+    snapshot: PathBuf,
+    /// Annotated candidate registry.
+    #[arg(long, default_value = ".agents/backlog/registry.toml")]
+    registry: PathBuf,
+    /// Run only the deterministic scoring self-check.
+    #[arg(long)]
+    self_check: bool,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -430,6 +445,7 @@ enum EvalAgentCommand {
     VerifyFast,
     ReviewPack,
     UpstreamCheck,
+    Backlog,
 }
 
 #[derive(Debug, Deserialize)]
@@ -544,6 +560,7 @@ fn dispatch(cli: &Cli) -> AppResult<(&'static str, Value)> {
         CommandKind::ReleaseManifest(args) => {
             Ok(("release-manifest", release_manifest(&args.input)?))
         }
+        CommandKind::Backlog(args) => Ok(("backlog", backlog(args)?)),
     }
 }
 
@@ -562,6 +579,7 @@ fn command_name(command: &CommandKind) -> &'static str {
         CommandKind::UpstreamCheck => "upstream-check",
         CommandKind::Eval => "eval",
         CommandKind::ReleaseManifest(_) => "release-manifest",
+        CommandKind::Backlog(_) => "backlog",
     }
 }
 
@@ -718,6 +736,7 @@ fn validate_contract_schema(repo: &Path) -> AppResult<()> {
     }
     let expected = BTreeSet::from([
         "AreaManifest",
+        "BacklogRecord",
         "ImpactReport",
         "InvariantRecord",
         "ReleaseManifest",
@@ -735,7 +754,7 @@ fn validate_contract_schema(repo: &Path) -> AppResult<()> {
         .collect::<BTreeSet<_>>();
     if actual != expected {
         return Err(AppError::invalid(
-            "contract schema must define exactly the eight v1 record kinds",
+            "contract schema must define exactly the nine v1 record kinds",
         ));
     }
     let definitions = schema
@@ -773,6 +792,7 @@ fn doctor() -> AppResult<DoctorReport> {
         ".agents/INDEX.md",
         ".agents/area-manifest.json",
         ".agents/invariants.yml",
+        ".agents/backlog/registry.toml",
         ".github/AGENTS.md",
         "crates/AGENTS.md",
         "tests/AGENTS.md",
@@ -1281,6 +1301,438 @@ fn impact(base: &str) -> AppResult<ImpactReport> {
         scoped_guides: scoped.guides,
         invariant_ids,
     })
+}
+
+// ---- golden backlog scoring -------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct SnapshotProvenance {
+    #[serde(default)]
+    snapshot_date: String,
+    #[serde(default)]
+    upstream_sha: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SnapshotIssue {
+    number: u64,
+    #[serde(default)]
+    reactions: u64,
+    #[serde(default)]
+    comments: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct SnapshotPull {
+    number: u64,
+    #[serde(default)]
+    linked_issues: Vec<u64>,
+    #[serde(default)]
+    updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SnapshotNotPlanned {
+    number: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RegistryFile {
+    version: u32,
+    calibration: Calibration,
+    #[serde(default)]
+    issues: Vec<RegistryIssue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Calibration {
+    #[serde(default)]
+    reference_mines: Vec<u64>,
+    #[serde(default)]
+    known_bad: Vec<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RegistryIssue {
+    number: u64,
+    title: String,
+    status: String,
+    #[serde(default)]
+    stance: String,
+    #[serde(default)]
+    subsystem: String,
+    confidence: u8,
+    safety: u8,
+    impact: u8,
+    burden: u8,
+    #[serde(default)]
+    note: String,
+    #[serde(default)]
+    exclude_reason: String,
+    #[serde(default)]
+    human_override: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BacklogEntry {
+    #[serde(rename = "ref")]
+    reference: String,
+    number: u64,
+    title: String,
+    status: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    stance: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    subsystem: String,
+    tier: &'static str,
+    demand: u8,
+    confidence: u8,
+    safety: u8,
+    impact: u8,
+    burden: u8,
+    score: u64,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    note: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BacklogExclusion {
+    #[serde(rename = "ref")]
+    reference: String,
+    number: u64,
+    title: String,
+    reason: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BacklogRecord {
+    snapshot_date: String,
+    upstream_sha: String,
+    scored: usize,
+    excluded: usize,
+    unscored: Vec<String>,
+    tier_a: Vec<BacklogEntry>,
+    tier_b: Vec<BacklogEntry>,
+    tier_c: Vec<BacklogEntry>,
+    excluded_entries: Vec<BacklogExclusion>,
+}
+
+#[derive(Debug, Serialize)]
+struct BacklogSelfCheck {
+    status: &'static str,
+    snapshot_date: String,
+    upstream_sha: String,
+    scored: usize,
+    excluded: usize,
+    unscored: usize,
+    tier_a: usize,
+    tier_b: usize,
+    tier_c: usize,
+    reference_mines: Vec<String>,
+    known_bad: Vec<String>,
+}
+
+fn demand_grade(reactions: u64, comments: u64) -> u8 {
+    if reactions >= 100 || comments >= 30 {
+        5
+    } else if reactions >= 40 || comments >= 20 {
+        4
+    } else if reactions >= 15 || comments >= 10 {
+        3
+    } else if reactions >= 5 || comments >= 4 {
+        2
+    } else {
+        1
+    }
+}
+
+fn backlog_score(demand: u8, confidence: u8, safety: u8, impact: u8, burden: u8) -> u64 {
+    (u64::from(demand) * u64::from(confidence) * u64::from(safety) * u64::from(impact))
+        / u64::from(burden)
+}
+
+fn backlog_tier(score: u64) -> &'static str {
+    if score >= 120 {
+        "a"
+    } else if score >= 48 {
+        "b"
+    } else {
+        "c"
+    }
+}
+
+fn ymd(text: &str) -> Option<(i64, u32, u32)> {
+    let mut parts = text.split('-');
+    let year = parts.next()?.parse::<i64>().ok()?;
+    let month = parts.next()?.parse::<u32>().ok()?;
+    let day = parts.next()?.parse::<u32>().ok()?;
+    if parts.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    Some((year, month, day))
+}
+
+fn days_since(earlier: &str, later: &str) -> Option<i64> {
+    let (early_year, early_month, early_day) = ymd(earlier)?;
+    let (late_year, late_month, late_day) = ymd(later)?;
+    let ordinal = |year: i64, month: u32, day: u32| -> i64 {
+        let mut total =
+            year * 365 + year.div_euclid(4) - year.div_euclid(100) + year.div_euclid(400);
+        let cumulative = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+        total += i64::from(cumulative[(month - 1) as usize]) + i64::from(day);
+        if month > 2 && year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
+            total += 1;
+        }
+        total
+    };
+    Some(
+        ordinal(late_year, late_month, late_day)
+            - ordinal(early_year, early_month, early_day),
+    )
+}
+
+fn backlog(args: &BacklogArgs) -> AppResult<Value> {
+    let repo = root()?;
+    let snapshot_dir = repo.join(&args.snapshot);
+    let registry_path = repo.join(&args.registry);
+
+    let read_json = |name: &str| -> AppResult<Value> {
+        let path = snapshot_dir.join(name);
+        let text = fs::read_to_string(&path).map_err(|error| {
+            AppError::invalid(format!(
+                "cannot read backlog snapshot {}: {} (run scripts/backlog-fetch.sh first)",
+                path.display(),
+                error
+            ))
+        })?;
+        serde_json::from_str(&text).map_err(|error| {
+            AppError::invalid(format!("backlog snapshot {name} is not JSON: {error}"))
+        })
+    };
+    let parse = |name: &str| -> AppResult<Value> { read_json(name) };
+
+    let provenance: SnapshotProvenance =
+        serde_json::from_value(parse("provenance.json")?).map_err(|error| {
+            AppError::invalid(format!("invalid backlog provenance: {error}"))
+        })?;
+    let issues: Vec<SnapshotIssue> = serde_json::from_value(parse("issues.json")?)
+        .map_err(|error| AppError::invalid(format!("invalid backlog issues: {error}")))?;
+    let pulls: Vec<SnapshotPull> = serde_json::from_value(parse("pulls.json")?)
+        .map_err(|error| AppError::invalid(format!("invalid backlog pulls: {error}")))?;
+    let not_planned: Vec<SnapshotNotPlanned> =
+        serde_json::from_value(parse("closed-not-planned.json")?).map_err(|error| {
+            AppError::invalid(format!("invalid backlog not-planned: {error}"))
+        })?;
+
+    let registry: RegistryFile = toml::from_str(&read_semantic_text(&registry_path)?)
+        .map_err(|error| {
+            AppError::invalid(format!("invalid backlog registry: {error}"))
+        })?;
+    if registry.version != 1 {
+        return Err(AppError::invalid("backlog registry must have version 1"));
+    }
+
+    let demand_by_number = issues
+        .iter()
+        .map(|issue| (issue.number, issue))
+        .collect::<BTreeMap<_, _>>();
+    let not_planned_set =
+        not_planned.iter().map(|entry| entry.number).collect::<BTreeSet<_>>();
+
+    let mut seen = BTreeSet::new();
+    let mut tier_a = Vec::new();
+    let mut tier_b = Vec::new();
+    let mut tier_c = Vec::new();
+    let mut excluded = Vec::new();
+    let mut unscored = Vec::new();
+    let mut scores = BTreeMap::new();
+
+    for issue in &registry.issues {
+        if !seen.insert(issue.number) {
+            return Err(AppError::invalid(format!(
+                "backlog registry repeats issue {}",
+                issue.number
+            )));
+        }
+        if issue.title.trim().is_empty() || issue.status.trim().is_empty() {
+            return Err(AppError::invalid(format!(
+                "backlog registry issue {} has an empty title or status",
+                issue.number
+            )));
+        }
+        for (name, factor) in [
+            ("confidence", issue.confidence),
+            ("safety", issue.safety),
+            ("impact", issue.impact),
+            ("burden", issue.burden),
+        ] {
+            if !(1..=5).contains(&factor) {
+                return Err(AppError::invalid(format!(
+                    "backlog registry issue {} has {name} {factor} outside 1..=5",
+                    issue.number
+                )));
+            }
+        }
+        let reference = format!("#{}", issue.number);
+        let Some(snapshot_issue) = demand_by_number.get(&issue.number) else {
+            unscored.push(reference);
+            continue;
+        };
+        let demand = demand_grade(snapshot_issue.reactions, snapshot_issue.comments);
+
+        let mut reason = String::new();
+        if issue.human_override.is_empty() {
+            if !issue.exclude_reason.is_empty() {
+                reason = issue.exclude_reason.clone();
+            } else if not_planned_set.contains(&issue.number) {
+                reason = "not-planned".into();
+            } else if let Some(pull) = pulls.iter().find(|pull| {
+                pull.linked_issues.contains(&issue.number)
+                    && days_since(&pull.updated_at, &provenance.snapshot_date)
+                        .is_none_or(|days| days <= 180)
+            }) {
+                reason = format!("upstream-pr-active:#{}", pull.number);
+            }
+        }
+        if !reason.is_empty() {
+            excluded.push(BacklogExclusion {
+                reference,
+                number: issue.number,
+                title: issue.title.clone(),
+                reason,
+            });
+            continue;
+        }
+
+        let score = backlog_score(
+            demand,
+            issue.confidence,
+            issue.safety,
+            issue.impact,
+            issue.burden,
+        );
+        let tier = backlog_tier(score);
+        let entry = BacklogEntry {
+            reference,
+            number: issue.number,
+            title: issue.title.clone(),
+            status: issue.status.clone(),
+            stance: issue.stance.clone(),
+            subsystem: issue.subsystem.clone(),
+            tier,
+            demand,
+            confidence: issue.confidence,
+            safety: issue.safety,
+            impact: issue.impact,
+            burden: issue.burden,
+            score,
+            note: issue.note.clone(),
+        };
+        scores.insert(issue.number, tier);
+        match tier {
+            "a" => tier_a.push(entry),
+            "b" => tier_b.push(entry),
+            _ => tier_c.push(entry),
+        }
+    }
+
+    // Calibration: reference mines must stay mineable, known-bad must stay excluded.
+    let excluded_numbers =
+        excluded.iter().map(|entry| entry.number).collect::<BTreeSet<_>>();
+    for reference in &registry.calibration.reference_mines {
+        match scores.get(reference).copied() {
+            Some("a" | "b") => {}
+            _ => {
+                return Err(AppError::verification(format!(
+                    "backlog calibration reference #{reference} is not in tier a/b"
+                )));
+            }
+        }
+    }
+    for bad in &registry.calibration.known_bad {
+        if !excluded_numbers.contains(bad) {
+            return Err(AppError::verification(format!(
+                "backlog calibration known-bad #{bad} is not excluded"
+            )));
+        }
+    }
+
+    tier_a.sort_by(|left, right| {
+        right.score.cmp(&left.score).then(left.number.cmp(&right.number))
+    });
+    tier_b.sort_by(|left, right| {
+        right.score.cmp(&left.score).then(left.number.cmp(&right.number))
+    });
+    tier_c.sort_by(|left, right| {
+        right.score.cmp(&left.score).then(left.number.cmp(&right.number))
+    });
+    excluded.sort_by_key(|entry| entry.number);
+    tier_a.truncate(20);
+    tier_b.truncate(40);
+    tier_c.truncate(40);
+    excluded.truncate(80);
+
+    let reference_mines = registry
+        .calibration
+        .reference_mines
+        .iter()
+        .map(|number| format!("#{number}"))
+        .collect();
+    let known_bad = registry
+        .calibration
+        .known_bad
+        .iter()
+        .map(|number| format!("#{number}"))
+        .collect();
+
+    if args.self_check {
+        return json_value(BacklogSelfCheck {
+            status: "passed",
+            snapshot_date: provenance.snapshot_date,
+            upstream_sha: provenance.upstream_sha,
+            scored: tier_a.len() + tier_b.len() + tier_c.len(),
+            excluded: excluded.len(),
+            unscored: unscored.len(),
+            tier_a: tier_a.len(),
+            tier_b: tier_b.len(),
+            tier_c: tier_c.len(),
+            reference_mines,
+            known_bad,
+        });
+    }
+
+    let record = BacklogRecord {
+        snapshot_date: provenance.snapshot_date,
+        upstream_sha: provenance.upstream_sha,
+        scored: tier_a.len() + tier_b.len() + tier_c.len(),
+        excluded: excluded.len(),
+        unscored,
+        tier_a,
+        tier_b,
+        tier_c,
+        excluded_entries: excluded,
+    };
+    let pack = json!({
+        "contract_version": CONTRACT_VERSION,
+        "kind": "BacklogRecord",
+        "payload": record,
+    });
+    let directory = repo.join(".tmp/agent");
+    fs::create_dir_all(&directory)
+        .map_err(|error| AppError::authority(error.to_string()))?;
+    let path = directory.join("backlog.json");
+    let bytes = serde_json::to_vec_pretty(&pack)
+        .map_err(|error| AppError::invalid(error.to_string()))?;
+    if bytes.len() as u64 > MAX_SEMANTIC_EVIDENCE_BYTES {
+        return Err(AppError::authority(
+            "backlog evidence exceeds the semantic evidence limit",
+        ));
+    }
+    fs::write(&path, bytes).map_err(|error| AppError::authority(error.to_string()))?;
+    Ok(json!({"path": ".tmp/agent/backlog.json", "record": pack}))
 }
 
 fn transitive_dependents(
@@ -1968,12 +2420,13 @@ fn eval() -> AppResult<Value> {
         .and_then(|k| k.get("enum"))
         .and_then(Value::as_array)
         .map_or(0, Vec::len);
-    if kinds != 8 || context.guides.is_empty() {
+    if kinds != 9 || context.guides.is_empty() {
         return Err(AppError::verification(
             "control-plane self-check did not find the contract or scoped guide",
         ));
     }
     let required_tasks = [
+        "backlog-score-golden",
         "navigation",
         "parser-span-change",
         "layout-reference-change",
@@ -2410,6 +2863,14 @@ fn run_eval_agent(
         EvalAgentCommand::UpstreamCheck => {
             args.push("upstream-check".into());
             "upstream-check"
+        }
+        EvalAgentCommand::Backlog => {
+            args.extend([
+                "backlog".into(),
+                "--snapshot".into(),
+                "evals/fixtures/backlog/golden".into(),
+            ]);
+            "backlog"
         }
     };
     let executable = executable.to_string_lossy().into_owned();
@@ -3074,5 +3535,44 @@ capture = "shell"
 expected = 0
 "#;
         assert!(toml::from_str::<EvalTask>(arbitrary).is_err());
+    }
+
+    #[test]
+    fn backlog_demand_grade_follows_the_documented_rubric() {
+        assert_eq!(demand_grade(0, 0), 1);
+        assert_eq!(demand_grade(4, 3), 1);
+        assert_eq!(demand_grade(0, 4), 2);
+        assert_eq!(demand_grade(12, 0), 2);
+        assert_eq!(demand_grade(15, 0), 3);
+        assert_eq!(demand_grade(0, 10), 3);
+        assert_eq!(demand_grade(40, 0), 4);
+        assert_eq!(demand_grade(0, 20), 4);
+        assert_eq!(demand_grade(100, 0), 5);
+        assert_eq!(demand_grade(0, 30), 5);
+    }
+
+    #[test]
+    fn backlog_score_matches_the_mining_formula_and_tiers() {
+        // demand x confidence x safety x impact / burden
+        assert_eq!(backlog_score(3, 4, 5, 4, 1), 240);
+        assert_eq!(backlog_score(2, 4, 5, 4, 1), 160);
+        assert_eq!(backlog_score(4, 3, 5, 3, 2), 90);
+        assert_eq!(backlog_score(3, 4, 4, 4, 3), 64);
+        assert_eq!(backlog_score(5, 5, 5, 5, 1), 625);
+        assert_eq!(backlog_score(1, 1, 1, 1, 5), 0);
+        assert_eq!(backlog_tier(120), "a");
+        assert_eq!(backlog_tier(119), "b");
+        assert_eq!(backlog_tier(48), "b");
+        assert_eq!(backlog_tier(47), "c");
+    }
+
+    #[test]
+    fn backlog_days_since_handles_leap_years_and_garbage() {
+        assert_eq!(days_since("2026-02-10", "2026-08-16"), Some(187));
+        assert_eq!(days_since("2026-08-16", "2026-08-16"), Some(0));
+        assert_eq!(days_since("2024-02-28", "2024-03-01"), Some(2));
+        assert_eq!(days_since("2023-02-28", "2023-03-01"), Some(1));
+        assert_eq!(days_since("garbage", "2026-08-16"), None);
+        assert_eq!(days_since("2026-13-01", "2026-08-16"), None);
     }
 }

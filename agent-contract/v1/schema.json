@@ -16,7 +16,8 @@
         "VerificationEvidence",
         "ReviewEvidence",
         "UpstreamProvenance",
-        "ReleaseManifest"
+        "ReleaseManifest",
+        "BacklogRecord"
       ]
     },
     "payload": { "type": "object" }
@@ -68,6 +69,12 @@
       "properties": {
         "kind": { "const": "ReleaseManifest" },
         "payload": { "$ref": "#/$defs/ReleaseManifest" }
+      }
+    },
+    {
+      "properties": {
+        "kind": { "const": "BacklogRecord" },
+        "payload": { "$ref": "#/$defs/BacklogRecord" }
       }
     }
   ],
@@ -413,6 +420,83 @@
             }
           }
         }
+      }
+    },
+    "BacklogRecord": {
+      "type": "object",
+      "required": [
+        "snapshot_date",
+        "upstream_sha",
+        "scored",
+        "excluded",
+        "unscored",
+        "tier_a",
+        "tier_b",
+        "tier_c",
+        "excluded_entries"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "snapshot_date": { "$ref": "#/$defs/NonEmptyString" },
+        "upstream_sha": { "type": "string" },
+        "scored": { "type": "integer", "minimum": 0 },
+        "excluded": { "type": "integer", "minimum": 0 },
+        "unscored": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NonEmptyString" },
+          "uniqueItems": true
+        },
+        "tier_a": { "type": "array", "items": { "$ref": "#/$defs/BacklogEntry" } },
+        "tier_b": { "type": "array", "items": { "$ref": "#/$defs/BacklogEntry" } },
+        "tier_c": { "type": "array", "items": { "$ref": "#/$defs/BacklogEntry" } },
+        "excluded_entries": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/BacklogExclusion" }
+        }
+      }
+    },
+    "BacklogEntry": {
+      "type": "object",
+      "required": [
+        "ref",
+        "number",
+        "title",
+        "status",
+        "tier",
+        "demand",
+        "confidence",
+        "safety",
+        "impact",
+        "burden",
+        "score"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "ref": { "$ref": "#/$defs/NonEmptyString" },
+        "number": { "type": "integer", "minimum": 1 },
+        "title": { "$ref": "#/$defs/NonEmptyString" },
+        "status": { "$ref": "#/$defs/NonEmptyString" },
+        "stance": { "$ref": "#/$defs/NonEmptyString" },
+        "subsystem": { "$ref": "#/$defs/NonEmptyString" },
+        "tier": { "enum": ["a", "b", "c"] },
+        "demand": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "confidence": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "safety": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "impact": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "burden": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "score": { "type": "integer", "minimum": 0 },
+        "note": { "$ref": "#/$defs/NonEmptyString" }
+      }
+    },
+    "BacklogExclusion": {
+      "type": "object",
+      "required": ["ref", "number", "title", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "ref": { "$ref": "#/$defs/NonEmptyString" },
+        "number": { "type": "integer", "minimum": 1 },
+        "title": { "$ref": "#/$defs/NonEmptyString" },
+        "reason": { "$ref": "#/$defs/NonEmptyString" }
       }
     }
   }

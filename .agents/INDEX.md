@@ -9,3 +9,7 @@ Cargo metadata, the manifest, or ordered upstream history.
 The invariant registry is [`invariants.yml`](invariants.yml). Cross-cutting
 rules live in [`AGENTS.md`](../AGENTS.md), and all portable record shapes are
 strictly defined by [`agent-contract/v1/schema.json`](../agent-contract/v1/schema.json).
+
+Golden-backlog mining is governed by [`areas/backlog.md`](areas/backlog.md), the
+registry at [`backlog/registry.toml`](backlog/registry.toml), and the
+[`typst-mine-backlog`](skills/typst-mine-backlog/SKILL.md) skill.

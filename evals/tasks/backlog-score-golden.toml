@@ -1,0 +1,19 @@
+id = "backlog-score-golden"
+scope = [".agents/backlog/registry.toml"]
+
+[[operations]]
+kind = "agent"
+capture = "backlog"
+command = "backlog"
+paths = []
+
+[[graders]]
+kind = "exit-code"
+capture = "backlog"
+expected = 0
+
+[[graders]]
+kind = "json-contains"
+capture = "backlog"
+pointer = "/payload/record"
+values = ["#2102", "#3679", "#1765", "#6225", "#2249"]

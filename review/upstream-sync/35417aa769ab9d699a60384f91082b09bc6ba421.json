@@ -1,0 +1,133 @@
+{
+  "contract_version": "agent-contract/v1",
+  "kind": "UpstreamProvenance",
+  "payload": {
+    "upstream_url": "https://github.com/typst/typst.git",
+    "upstream_sha": "35417aa769ab9d699a60384f91082b09bc6ba421",
+    "mirror_sha": "35417aa769ab9d699a60384f91082b09bc6ba421",
+    "tags": [
+      {
+        "name": "v0.1.0",
+        "sha": "b3faef4b80a674294091066e20501e3a5d0f6103"
+      },
+      {
+        "name": "v0.10.0",
+        "sha": "70ca0d257bb4ba927f63260e20443f244e0bb58c"
+      },
+      {
+        "name": "v0.11.0",
+        "sha": "2bf9f95dd83f2ceef1e32ae1847a162c7d193f76"
+      },
+      {
+        "name": "v0.11.0-rc1",
+        "sha": "fe94bd85aec9348c4f86a7b20befb6562655c93f"
+      },
+      {
+        "name": "v0.11.1",
+        "sha": "5011510270c2c23f0ab019af486b26db0d62261b"
+      },
+      {
+        "name": "v0.12.0",
+        "sha": "737895d769188f6fc154523e67a9102bc24c872e"
+      },
+      {
+        "name": "v0.12.0-rc1",
+        "sha": "d5b1f4a6f9b16166b4affe8c49d3f433a4b425c8"
+      },
+      {
+        "name": "v0.12.0-rc2",
+        "sha": "ef309ca19617a3f1b8b78efb9644b67460fa5203"
+      },
+      {
+        "name": "v0.13.0",
+        "sha": "8dce676dcd691f75696719e0480cd619829846a9"
+      },
+      {
+        "name": "v0.13.0-rc1",
+        "sha": "56d8188c61de95e4fb6b8e77a175e72e20dba99e"
+      },
+      {
+        "name": "v0.13.1",
+        "sha": "8ace67d942a4b8c6b9d95b73b3a39f5d0259c7b2"
+      },
+      {
+        "name": "v0.14.0",
+        "sha": "dd1e6e94f73db6a257a5ac34a6320e00410a2534"
+      },
+      {
+        "name": "v0.14.0-rc.1",
+        "sha": "6b79d12073d73f062a150103cdc11526c68a94c7"
+      },
+      {
+        "name": "v0.14.0-rc.2",
+        "sha": "8c17aa75e61f15f0d828d639fbcff01340bcc790"
+      },
+      {
+        "name": "v0.14.1",
+        "sha": "eb2027e55f17a91cc2025c7a71674a2c5ea3a363"
+      },
+      {
+        "name": "v0.14.2",
+        "sha": "b33de9de113c91c184214b299bd7a8eb3070c3ab"
+      },
+      {
+        "name": "v0.15.0",
+        "sha": "3ae52774b48987fc78a72ff483068cacc28e46c2"
+      },
+      {
+        "name": "v0.15.0-rc.1",
+        "sha": "c93cf32f6f08b6085efafe2217efd746f830663d"
+      },
+      {
+        "name": "v0.15.1",
+        "sha": "9dfd3a08500b7896045f907433cf7b4b02434fad"
+      },
+      {
+        "name": "v0.2.0",
+        "sha": "fe2640c55268f167d8749f77b37e52b7b17f21dd"
+      },
+      {
+        "name": "v0.3.0",
+        "sha": "b1e0de00784061a7670072160683f56c8269b25c"
+      },
+      {
+        "name": "v0.4.0",
+        "sha": "f692a5efc62bf95f57d123895b7dce55d2eb9741"
+      },
+      {
+        "name": "v0.5.0",
+        "sha": "3a8b9cce471934031ba57c5972d194ac1d7d2a6c"
+      },
+      {
+        "name": "v0.6.0",
+        "sha": "2dfd44fedd99ab9414c17f358179e1c37e953f30"
+      },
+      {
+        "name": "v0.7.0",
+        "sha": "da8367e189b02918a8fe1a98fd3059fd11a82cd9"
+      },
+      {
+        "name": "v0.8.0",
+        "sha": "360cc9b9570f263d52530b98d0c93523e7bdb100"
+      },
+      {
+        "name": "v0.9.0",
+        "sha": "7bb4f6df44086b4c1120b227f7ae963e6c2ad5ab"
+      },
+      {
+        "name": "v23-03-21",
+        "sha": "4428646c9997171e3aea25ad2f0c151755f072da"
+      },
+      {
+        "name": "v23-03-21-2",
+        "sha": "b934a2fd83d63fc115c01f959e888c7bc1aa87e4"
+      },
+      {
+        "name": "v23-03-28",
+        "sha": "056d15aa49f545980b03068684f0d44e35248cd6"
+      }
+    ],
+    "push_url_inert": true,
+    "status": "identical"
+  }
+}

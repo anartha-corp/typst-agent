@@ -47,18 +47,40 @@
 #t(left, `left`)
 
 // Content.
-#t([*Hey*], `strong(body: [Hey])`)
-#t([A _sequence_], `sequence([A], [ ], emph(body: [sequence]))`)
+#t([*Hey*], `strong([Hey])`)
+#t([A _sequence_], `sequence([A], [ ], emph([sequence]))`)
 #t([A _longer_ *sequence*!], ```
 sequence(
   [A],
   [ ],
-  emph(body: [longer]),
+  emph([longer]),
   [ ],
-  strong(body: [sequence]),
+  strong([sequence]),
   [!],
 )
 ```)
+
+// Repr round-trip for generically-represented elements (upstream #2887).
+// The output must be parseable and repr-idempotent for these top-level
+// elements whose constructor syntax has no qualification.
+#let valid(x) = test(repr(eval(repr(x))), repr(x))
+
+#valid(repeat[.])
+#valid(strong[Hey])
+#valid(heading(numbering: "a")[A])
+#valid(stack(dir: ltr, [A], [B]))
+
+// Exact outputs for the new argument ordering.
+#test(repr(repeat[.]), "repeat([.])")
+#test(repr(strong[Hey]), "strong([Hey])")
+#test(
+  repr(heading(numbering: "a")[A]),
+  "heading([A], numbering: \"a\")",
+)
+#test(
+  repr(stack(dir: ltr, [A], [B])),
+  "stack(dir: ltr, ..([A], [B]))",
+)
 
 // Colors and strokes.
 #t(rgb("f7a205"), `rgb("#f7a205")`)

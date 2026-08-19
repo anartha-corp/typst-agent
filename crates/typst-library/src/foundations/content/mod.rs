@@ -625,17 +625,26 @@ impl<T: NativeElement> From<T> for Content {
 impl Repr for Content {
     fn repr(&self) -> EcoString {
         self.0.handle().repr().unwrap_or_else(|| {
-            let fields = self
-                .0
-                .handle()
-                .fields()
-                .filter_map(|field| field.get().map(|v| (field.name, v.repr())))
-                .map(|(name, value)| eco_format!("{name}: {value}"))
-                .collect::<Vec<_>>();
+            let mut positional = Vec::new();
+            let mut named = Vec::new();
+            let mut variadic = Vec::new();
+            for field in self.0.handle().fields() {
+                let Some(value) = field.get() else { continue };
+                let repr = value.repr();
+                if field.variadic {
+                    variadic.push(eco_format!("..{repr}"));
+                } else if field.positional {
+                    positional.push(repr);
+                } else {
+                    named.push(eco_format!("{}: {}", field.name, repr));
+                }
+            }
+            positional.append(&mut named);
+            positional.append(&mut variadic);
             eco_format!(
                 "{}{}",
                 self.elem().name(),
-                repr::pretty_array_like(&fields, false),
+                repr::pretty_array_like(&positional, false),
             )
         })
     }

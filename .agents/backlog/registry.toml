@@ -270,14 +270,16 @@ note = "laurmaedje: community embolden approach acceptable for now"
 [[issues]]
 number = 2887
 title = "Content `repr` isn't always valid syntax"
-status = "candidate"
-stance = "none"
+status = "mined"
+stance = "endorsing"
 subsystem = "scripting"
-confidence = 4
-safety = 4
+confidence = 5
+safety = 5
 impact = 3
 burden = 2
-note = "good contribution; repr should round-trip to valid syntax"
+note = "maintainer-endorsed direction; prior PR #2896 closed due to abandonment; generic Content::repr fallback now groups positional/named/variadic fields; drop-when-upstream: revert one function + test expectations"
+curated_at = "2026-08-16"
+downstream_pr = 32
 
 [[issues]]
 number = 2025

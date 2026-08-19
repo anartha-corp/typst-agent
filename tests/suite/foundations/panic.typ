@@ -23,7 +23,7 @@ oops")
 
 --- panic-raw-newline eval ---
 // Test panic with raw text containing escaped and normal newlines.
-// Error: 1:2-2:5 panicked with: raw(text: "\\n\n\\n", block: false)
+// Error: 1:2-2:5 panicked with: raw("\\n\n\\n", block: false)
 #panic(`\n
 \n`)
 
